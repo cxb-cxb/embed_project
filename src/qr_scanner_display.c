@@ -59,11 +59,14 @@ static volatile int g_running = 1;
 
 /* V4L2 */
 static int            g_fd = -1;
-static void          *g_buf_ptr[MAX_BUFFERS];
-static unsigned int   g_buf_len[MAX_BUFFERS];
+static void          *g_y_ptr[MAX_BUFFERS];
+static void          *g_uv_ptr[MAX_BUFFERS];
+static unsigned int   g_y_len[MAX_BUFFERS];
+static unsigned int   g_uv_len[MAX_BUFFERS];
 static unsigned int   g_nbufs    = 0;
 static unsigned int   g_y_stride = 0;
 static unsigned int   g_uv_stride = 0;
+static unsigned int   g_cam_h = 0;
 
 /* DRM */
 static int            g_drm_fd      = -1;
@@ -117,6 +120,47 @@ static void nv12_to_xrgb(uint8_t *y, uint8_t *uv,
     }
 }
 
+static void y_to_xrgb_scaled(uint8_t *y, int src_w, int src_h, int ys,
+                             uint32_t *dst, int dst_w, int dst_h, int ds)
+{
+    for (int j = 0; j < dst_h; j++) {
+        int sy = (int)((int64_t)j * src_h / dst_h);
+        uint8_t *src_row = y + sy * ys;
+        uint32_t *dst_row = dst + j * ds;
+        for (int i = 0; i < dst_w; i++) {
+            int sx = (int)((int64_t)i * src_w / dst_w);
+            uint8_t v = src_row[sx];
+            dst_row[i] = 0xFF000000U | ((uint32_t)v << 16) | ((uint32_t)v << 8) | v;
+        }
+    }
+}
+
+static void nv12_to_xrgb_scaled(uint8_t *y, uint8_t *uv,
+                                int src_w, int src_h, int ys, int uvs,
+                                uint32_t *dst, int dst_w, int dst_h, int ds)
+{
+    for (int j = 0; j < dst_h; j++) {
+        int sy = (int)((int64_t)j * src_h / dst_h);
+        uint8_t *y_row = y + sy * ys;
+        uint8_t *uv_row = uv + (sy / 2) * uvs;
+        uint32_t *dst_row = dst + j * ds;
+        for (int i = 0; i < dst_w; i++) {
+            int sx = (int)((int64_t)i * src_w / dst_w);
+            int uvx = sx & ~1;
+            int Y = y_row[sx];
+            int U = uv_row[uvx];
+            int V = uv_row[uvx + 1];
+            int C = Y - 16;
+            int D = U - 128;
+            int E = V - 128;
+            int R = clamp_int((298 * C + 409 * E + 128) >> 8, 0, 255);
+            int G = clamp_int((298 * C - 100 * D - 208 * E + 128) >> 8, 0, 255);
+            int B = clamp_int((298 * C + 516 * D + 128) >> 8, 0, 255);
+            dst_row[i] = 0xFF000000U | ((uint32_t)R << 16) | ((uint32_t)G << 8) | (uint32_t)B;
+        }
+    }
+}
+
 /* ── 画空心矩形 ──────────────────────────────────────────────────── */
 
 static void draw_rect_rgb(uint32_t *fb, int fw, int fh,
@@ -137,6 +181,34 @@ static void draw_rect_rgb(uint32_t *fb, int fw, int fh,
             if (x1 - k >= 0)  fb[y * fw + (x1 - k)] = color;
         }
     }
+}
+
+static void draw_qr_outline(const struct quirc_code *code,
+                            unsigned int cam_w, unsigned int cam_h)
+{
+    int min_x = code->corners[0].x;
+    int max_x = code->corners[0].x;
+    int min_y = code->corners[0].y;
+    int max_y = code->corners[0].y;
+
+    for (int i = 1; i < 4; i++) {
+        min_x = min_x < code->corners[i].x ? min_x : code->corners[i].x;
+        max_x = max_x > code->corners[i].x ? max_x : code->corners[i].x;
+        min_y = min_y < code->corners[i].y ? min_y : code->corners[i].y;
+        max_y = max_y > code->corners[i].y ? max_y : code->corners[i].y;
+    }
+
+    int rx0 = min_x * g_drm_w / (int)cam_w;
+    int ry0 = min_y * g_drm_h / (int)cam_h;
+    int rx1 = max_x * g_drm_w / (int)cam_w;
+    int ry1 = max_y * g_drm_h / (int)cam_h;
+    int rx = clamp_int(rx0, 0, g_drm_w - 1);
+    int ry = clamp_int(ry0, 0, g_drm_h - 1);
+    int rw = clamp_int(rx1 - rx0, 1, g_drm_w - rx);
+    int rh = clamp_int(ry1 - ry0, 1, g_drm_h - ry);
+
+    draw_rect_rgb((uint32_t *)g_drm_map, g_drm_w, g_drm_h,
+                  rx, ry, rw, rh, 0xFF00FF00, 4);
 }
 
 /* ── DRM 显示初始化 (纯 ioctl, 无需 libdrm) ───────────────────────── */
@@ -435,8 +507,10 @@ static int camera_open(const char *dev, unsigned int *w, unsigned int *h)
     if (xioctl(g_fd, VIDIOC_S_FMT, &fmt) < 0) { perror("S_FMT"); return -1; }
     *w = fmt.fmt.pix_mp.width;
     *h = fmt.fmt.pix_mp.height;
+    g_cam_h = *h;
     g_y_stride  = fmt.fmt.pix_mp.plane_fmt[0].bytesperline;
     g_uv_stride = fmt.fmt.pix_mp.plane_fmt[1].bytesperline;
+    if (g_uv_stride == 0) g_uv_stride = g_y_stride;
     printf("[camera] NV12 %ux%u stride Y:%u UV:%u\n", *w, *h, g_y_stride, g_uv_stride);
 
     memset(&req, 0, sizeof(req));
@@ -458,11 +532,18 @@ static int camera_open(const char *dev, unsigned int *w, unsigned int *h)
         buf.length = 2;
         if (xioctl(g_fd, VIDIOC_QUERYBUF, &buf) < 0) { perror("QUERYBUF"); return -1; }
 
-        unsigned int total = planes[0].length + planes[1].length;
-        g_buf_len[i] = total;
-        g_buf_ptr[i] = mmap(NULL, total, PROT_READ | PROT_WRITE,
-                            MAP_SHARED, g_fd, planes[0].m.mem_offset);
-        if (g_buf_ptr[i] == MAP_FAILED) { perror("mmap vb"); return -1; }
+        g_y_len[i] = planes[0].length;
+        g_uv_len[i] = planes[1].length;
+        g_y_ptr[i] = mmap(NULL, g_y_len[i], PROT_READ | PROT_WRITE,
+                          MAP_SHARED, g_fd, planes[0].m.mem_offset);
+        if (g_y_ptr[i] == MAP_FAILED) { perror("mmap y"); return -1; }
+        if (g_uv_len[i] > 0) {
+            g_uv_ptr[i] = mmap(NULL, g_uv_len[i], PROT_READ | PROT_WRITE,
+                               MAP_SHARED, g_fd, planes[1].m.mem_offset);
+            if (g_uv_ptr[i] == MAP_FAILED) { perror("mmap uv"); return -1; }
+        } else {
+            g_uv_ptr[i] = NULL;
+        }
     }
     return 0;
 }
@@ -494,9 +575,12 @@ static void camera_stream_off(void)
 static void camera_close(void)
 {
     if (g_fd < 0) return;
-    for (unsigned int i = 0; i < g_nbufs; i++)
-        if (g_buf_ptr[i] && g_buf_ptr[i] != MAP_FAILED)
-            munmap(g_buf_ptr[i], g_buf_len[i]);
+    for (unsigned int i = 0; i < g_nbufs; i++) {
+        if (g_y_ptr[i] && g_y_ptr[i] != MAP_FAILED)
+            munmap(g_y_ptr[i], g_y_len[i]);
+        if (g_uv_ptr[i] && g_uv_ptr[i] != MAP_FAILED)
+            munmap(g_uv_ptr[i], g_uv_len[i]);
+    }
     close(g_fd);
     g_fd = -1;
 }
@@ -517,9 +601,13 @@ static int camera_grab(unsigned int *idx, uint8_t **py, unsigned int *yl,
         perror("DQBUF"); return -1;
     }
     *idx = buf.index;
-    *py  = (uint8_t *)g_buf_ptr[buf.index];
+    *py  = (uint8_t *)g_y_ptr[buf.index];
     *yl  = planes[0].bytesused;
-    *puv = (uint8_t *)g_buf_ptr[buf.index] + planes[0].length;
+    if (g_uv_ptr[buf.index]) {
+        *puv = (uint8_t *)g_uv_ptr[buf.index];
+    } else {
+        *puv = (uint8_t *)g_y_ptr[buf.index] + g_y_stride * g_cam_h;
+    }
     *uvl = planes[1].bytesused;
     return 0;
 }
@@ -599,10 +687,12 @@ int main(int argc, char **argv)
 
         /* LVDS 显示 */
         if (have_display) {
-            nv12_to_xrgb(yp, uvp, cam_w, cam_h,
-                         g_y_stride, g_uv_stride,
-                         (uint32_t *)g_drm_map,
-                         g_drm_pitch / 4);
+            (void)uvl;
+            nv12_to_xrgb_scaled(yp, uvp, cam_w, cam_h,
+                                g_y_stride, g_uv_stride,
+                                (uint32_t *)g_drm_map,
+                                g_drm_w, g_drm_h,
+                                g_drm_pitch / 4);
         }
 
         /* QR 检测 */
@@ -616,22 +706,15 @@ int main(int argc, char **argv)
                 struct quirc_code code;
                 struct quirc_data data;
                 quirc_extract(qr, i, &code);
+                if (have_display) {
+                    draw_qr_outline(&code, cam_w, cam_h);
+                }
                 if (quirc_decode(&code, &data) == QUIRC_SUCCESS) {
                     if (strcmp((char *)data.payload, last) != 0) {
                         printf("\n>>> QR CODE: %s <<<\n", data.payload);
                         printf("    ver:%d ecc:%c\n",
                                data.version, "MLHQ"[data.ecc_level]);
                         fflush(stdout);
-
-                        if (have_display) {
-                            int cx0 = code.corners[0].x, cy0 = code.corners[0].y;
-                            int cx2 = code.corners[2].x, cy2 = code.corners[2].y;
-                            int rx = clamp_int(cx0 < cx2 ? cx0 : cx2, 0, g_drm_w);
-                            int ry = clamp_int(cy0 < cy2 ? cy0 : cy2, 0, g_drm_h);
-                            int rw = abs(cx2 - cx0), rh = abs(cy2 - cy0);
-                            draw_rect_rgb((uint32_t *)g_drm_map, g_drm_w, g_drm_h,
-                                          rx, ry, rw, rh, 0xFF00FF00, 3);
-                        }
 
                         strncpy(last, (char *)data.payload, sizeof(last) - 1);
                         found++;
