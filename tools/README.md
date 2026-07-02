@@ -12,6 +12,14 @@ Common PowerShell commands from the project root:
 .\tools\scripts\adb-push-project.ps1
 ```
 
+Common Windows batch commands:
+
+```bat
+tools\scripts\adb-devices.bat
+tools\scripts\adb-shell.bat
+tools\scripts\adb-push-project.bat
+```
+
 Direct usage:
 
 ```powershell
