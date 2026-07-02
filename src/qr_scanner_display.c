@@ -28,6 +28,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <linux/videodev2.h>
+#include <linux/fb.h>
 #include <drm/drm.h>
 #include <drm/drm_mode.h>
 #include <drm/drm_fourcc.h>
@@ -46,6 +47,7 @@
 
 #define CAMERA_DEV      "/dev/video-camera0"
 #define DRM_DEV         "/dev/dri/card0"
+#define FB_DEV          "/dev/fb0"
 #define DEFAULT_WIDTH   640
 #define DEFAULT_HEIGHT  480
 #define MAX_BUFFERS     4
@@ -172,17 +174,15 @@ static int drm_display_init(int cam_w, int cam_h)
     for (unsigned int ci = 0; ci < res.count_connectors; ci++) {
         struct drm_mode_get_connector conn = {0};
         conn.connector_id = conn_arr[ci];
+        printf("[drm] checking connector index=%u id=%u\n", ci, conn.connector_id);
 
-        uint32_t mode_arr[256], prop_arr[128], enc_arr2[16];
-        conn.modes_ptr       = (uint64_t)(uintptr_t)mode_arr;
-        conn.props_ptr       = (uint64_t)(uintptr_t)prop_arr;
-        conn.prop_values_ptr = (uint64_t)(uintptr_t)prop_arr;
-        conn.encoders_ptr    = (uint64_t)(uintptr_t)enc_arr2;
-        conn.count_modes     = 256;
-        conn.count_props     = 128;
-        conn.count_encoders  = 16;
-
-        if (ioctl(fd, DRM_IOCTL_MODE_GETCONNECTOR, &conn) < 0) continue;
+        if (ioctl(fd, DRM_IOCTL_MODE_GETCONNECTOR, &conn) < 0) {
+            perror("MODE_GETCONNECTOR");
+            continue;
+        }
+        printf("[drm] connector %u type=%u state=%u modes=%u props=%u encoders=%u\n",
+               conn.connector_id, conn.connector_type, conn.connection,
+               conn.count_modes, conn.count_props, conn.count_encoders);
         if (conn.connection != DRM_MODE_CONNECTED || conn.count_modes == 0) continue;
 
         /* prioritize LVDS connector 154, then any LVDS, then any connected */
@@ -193,12 +193,22 @@ static int drm_display_init(int cam_w, int cam_h)
 
         /* get modes */
         struct drm_mode_modeinfo modes[128];
+        uint32_t prop_arr[128], prop_val_arr[128], enc_arr2[16];
         conn.modes_ptr       = (uint64_t)(uintptr_t)modes;
         conn.count_modes     = conn.count_modes > 128 ? 128 : conn.count_modes;
         conn.props_ptr       = (uint64_t)(uintptr_t)prop_arr;
-        conn.prop_values_ptr = (uint64_t)(uintptr_t)prop_arr;
+        conn.prop_values_ptr = (uint64_t)(uintptr_t)prop_val_arr;
+        conn.count_props     = conn.count_props > 128 ? 128 : conn.count_props;
         conn.encoders_ptr    = (uint64_t)(uintptr_t)enc_arr2;
-        if (ioctl(fd, DRM_IOCTL_MODE_GETCONNECTOR, &conn) < 0) continue;
+        conn.count_encoders  = conn.count_encoders > 16 ? 16 : conn.count_encoders;
+        if (ioctl(fd, DRM_IOCTL_MODE_GETCONNECTOR, &conn) < 0) {
+            perror("MODE_GETCONNECTOR modes");
+            continue;
+        }
+        printf("[drm] connector %u loaded modes=%u encoders=%u first_mode=%ux%u\n",
+               conn.connector_id, conn.count_modes, conn.count_encoders,
+               conn.count_modes ? modes[0].hdisplay : 0,
+               conn.count_modes ? modes[0].vdisplay : 0);
 
         for (unsigned int mi = 0; mi < conn.count_modes; mi++) {
             int score = 0;
@@ -218,29 +228,30 @@ static int drm_display_init(int cam_w, int cam_h)
             else if (!best_w) use = 1;
 
             if (use) {
-                /* Pick best encoder for this connector */
-                uint32_t enc_for_conn[16];
-                conn.encoders_ptr = (uint64_t)(uintptr_t)enc_for_conn;
-                conn.count_encoders = conn.count_encoders > 16 ? 16 : conn.count_encoders;
-                conn.modes_ptr    = 0;
-                conn.props_ptr    = 0;
-                conn.prop_values_ptr = 0;
-                if (ioctl(fd, DRM_IOCTL_MODE_GETCONNECTOR, &conn) < 0) continue;
-
+                uint32_t chosen_enc = 0;
+                uint32_t chosen_crtc = 0;
                 for (unsigned int ei = 0; ei < conn.count_encoders; ei++) {
                     struct drm_mode_get_encoder enc = {0};
-                    enc.encoder_id = enc_for_conn[ei];
+                    enc.encoder_id = enc_arr2[ei];
                     if (ioctl(fd, DRM_IOCTL_MODE_GETENCODER, &enc) < 0) continue;
-
-                    best_conn = conn.connector_id;
-                    best_enc  = enc.encoder_id;
-                    best_crtc = enc.crtc_id;
-                    best_mode = modes[mi];
-                    best_w = modes[mi].hdisplay;
-                    best_h = modes[mi].vdisplay;
-                    best_refresh = modes[mi].vrefresh;
-                    goto found;
+                    chosen_enc = enc.encoder_id;
+                    chosen_crtc = enc.crtc_id;
+                    break;
                 }
+                if (!chosen_enc && conn.count_encoders > 0) chosen_enc = enc_arr2[0];
+                if (!chosen_crtc && res.count_crtcs > 0) chosen_crtc = crtc_arr[0];
+                printf("[drm] candidate conn=%u enc=%u crtc=%u\n",
+                       conn.connector_id, chosen_enc, chosen_crtc);
+                if (!chosen_crtc) continue;
+
+                best_conn = conn.connector_id;
+                best_enc  = chosen_enc;
+                best_crtc = chosen_crtc;
+                best_mode = modes[mi];
+                best_w = modes[mi].hdisplay;
+                best_h = modes[mi].vdisplay;
+                best_refresh = modes[mi].vrefresh;
+                goto found;
             }
         }
     }
@@ -334,6 +345,52 @@ found:
 
     printf("[drm] Display init OK. FB %dx%d, pitch=%u\n",
            best_w, best_h, g_drm_pitch);
+    return 0;
+}
+
+static int fb_display_init(void)
+{
+    int fd = open(FB_DEV, O_RDWR);
+    if (fd < 0) { perror("open fb"); return -1; }
+
+    struct fb_var_screeninfo var;
+    struct fb_fix_screeninfo fix;
+    memset(&var, 0, sizeof(var));
+    memset(&fix, 0, sizeof(fix));
+
+    if (ioctl(fd, FBIOGET_VSCREENINFO, &var) < 0) {
+        perror("FBIOGET_VSCREENINFO");
+        close(fd);
+        return -1;
+    }
+    if (ioctl(fd, FBIOGET_FSCREENINFO, &fix) < 0) {
+        perror("FBIOGET_FSCREENINFO");
+        close(fd);
+        return -1;
+    }
+    if (var.bits_per_pixel != 32) {
+        fprintf(stderr, "fb bpp %u is not supported, need 32\n", var.bits_per_pixel);
+        close(fd);
+        return -1;
+    }
+
+    g_drm_size = (uint64_t)fix.line_length * var.yres_virtual;
+    if (g_drm_size == 0) g_drm_size = fix.smem_len;
+    g_drm_map = mmap(NULL, g_drm_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (g_drm_map == MAP_FAILED) {
+        perror("mmap fb");
+        close(fd);
+        return -1;
+    }
+
+    g_drm_fd = fd;
+    g_drm_w = (int)var.xres;
+    g_drm_h = (int)var.yres;
+    g_drm_pitch = fix.line_length;
+    memset(g_drm_map, 0, g_drm_size);
+
+    printf("[fb] Display init OK. FB %dx%d, pitch=%u, bpp=%u\n",
+           g_drm_w, g_drm_h, g_drm_pitch, var.bits_per_pixel);
     return 0;
 }
 
@@ -511,12 +568,20 @@ int main(int argc, char **argv)
         fprintf(stderr, "quirc init failed\n"); return 1;
     }
 
-    int have_display = (drm_display_init(cam_w, cam_h) == 0);
+    int have_display = 0;
+    const char *display_name = "OFF";
+    if (drm_display_init(cam_w, cam_h) == 0) {
+        have_display = 1;
+        display_name = "DRM";
+    } else if (fb_display_init() == 0) {
+        have_display = 1;
+        display_name = "FB0";
+    }
     if (camera_stream_on() < 0) return 1;
 
     printf("\n[scanner] %ux%u | display:%s | quirc QR\n"
            "  Put QR code in front of camera. Ctrl+C to stop.\n\n",
-           cam_w, cam_h, have_display ? "LVDS" : "OFF");
+           cam_w, cam_h, display_name);
     fflush(stdout);
 
     unsigned int frame = 0, found = 0;
