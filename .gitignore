@@ -15,3 +15,7 @@ Testing/
 *.tmp
 .DS_Store
 Thumbs.db
+
+!tools/adb/adb.exe
+!tools/adb/AdbWinApi.dll
+!tools/adb/AdbWinUsbApi.dll
