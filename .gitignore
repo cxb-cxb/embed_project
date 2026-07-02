@@ -1,0 +1,17 @@
+build/
+build_arm/
+Testing/
+.claude/
+
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.a
+*.lib
+
+*.log
+*.tmp
+.DS_Store
+Thumbs.db

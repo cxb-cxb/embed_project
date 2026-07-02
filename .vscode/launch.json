@@ -1,0 +1,21 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug native embed_project",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/embed_project",
+      "args": [
+        "${workspaceFolder}/data/products.csv"
+      ],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "miDebuggerPath": "/usr/bin/gdb",
+      "preLaunchTask": "Build: native debug"
+    }
+  ]
+}
