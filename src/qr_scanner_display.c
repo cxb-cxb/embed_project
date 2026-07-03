@@ -52,6 +52,7 @@
 #define DEFAULT_HEIGHT  480
 #define MAX_BUFFERS     4
 #define LVDS_CONNECTOR_ID  154
+#define MAX_CART_ITEMS 16
 
 /* ── 全局变量 ────────────────────────────────────────────────────── */
 
@@ -180,6 +181,296 @@ static void draw_rect_rgb(uint32_t *fb, int fw, int fh,
             if (x0 + k < fw) fb[y * fw + (x0 + k)] = color;
             if (x1 - k >= 0)  fb[y * fw + (x1 - k)] = color;
         }
+    }
+}
+
+
+
+struct retail_product {
+    const char *id;
+    const char *name;
+    const char *barcode;
+    int price_cents;
+};
+
+struct cart_line {
+    const struct retail_product *product;
+    int quantity;
+};
+
+static const struct retail_product g_products[] = {
+    {"mineral_water", "Mineral Water", "690100000001", 200},
+    {"cola", "Cola", "690100000002", 350},
+    {"milk", "Milk", "690100000003", 620},
+    {"bread", "Bread", "690100000004", 480},
+    {"instant_noodles", "Instant Noodles", "690100000005", 550},
+    {"chips", "Potato Chips", "690100000006", 680},
+    {"coffee", "Coffee", "690100000007", 990},
+    {"tea", "Tea Drink", "690100000008", 450},
+    {"cookies", "Cookies", "690100000009", 720},
+    {"yogurt", "Yogurt", "690100000010", 580},
+};
+
+static struct cart_line g_cart[MAX_CART_ITEMS];
+static int g_cart_count = 0;
+static const struct retail_product *g_last_product = NULL;
+static int g_last_price_cents = 0;
+static int g_last_total_cents = 0;
+static int g_last_item_count = 0;
+static char g_payment_url[160] = "PAY: scan item first";
+static char g_status_text[80] = "READY";
+static int g_checkout_done = 0;
+
+static int ascii_lower(int c)
+{
+    if (c >= 'A' && c <= 'Z') return c + ('a' - 'A');
+    return c;
+}
+
+static int equals_ignore_case(const char *a, const char *b)
+{
+    while (*a && *b) {
+        if (ascii_lower((unsigned char)*a) != ascii_lower((unsigned char)*b)) return 0;
+        a++;
+        b++;
+    }
+    return *a == '\0' && *b == '\0';
+}
+
+static const char *trim_payload(const char *payload)
+{
+    while (*payload == ' ' || *payload == '\t' || *payload == '\r' || *payload == '\n') payload++;
+    return payload;
+}
+
+static const struct retail_product *retail_find_product(const char *payload)
+{
+    const char *value = trim_payload(payload);
+    const char *prefix = "product:";
+    size_t prefix_len = strlen(prefix);
+    if (strncmp(value, prefix, prefix_len) == 0) value += prefix_len;
+
+    for (size_t i = 0; i < sizeof(g_products) / sizeof(g_products[0]); i++) {
+        if (equals_ignore_case(value, g_products[i].id) ||
+            equals_ignore_case(value, g_products[i].name) ||
+            strcmp(value, g_products[i].barcode) == 0) {
+            return &g_products[i];
+        }
+    }
+    return NULL;
+}
+
+static int retail_total_cents(void)
+{
+    int total = 0;
+    for (int i = 0; i < g_cart_count; i++) total += g_cart[i].product->price_cents * g_cart[i].quantity;
+    return total;
+}
+
+static int retail_item_count(void)
+{
+    int count = 0;
+    for (int i = 0; i < g_cart_count; i++) count += g_cart[i].quantity;
+    return count;
+}
+
+static void retail_money(char *out, size_t out_size, int cents)
+{
+    snprintf(out, out_size, "CNY %d.%02d", cents / 100, cents % 100);
+}
+
+static void retail_refresh_payment(void)
+{
+    snprintf(g_payment_url, sizeof(g_payment_url),
+             "PAY:https://pay.example.local/qsm368?amount=%d", g_last_total_cents);
+}
+
+static void retail_clear_cart(void)
+{
+    memset(g_cart, 0, sizeof(g_cart));
+    g_cart_count = 0;
+    g_last_product = NULL;
+    g_last_price_cents = 0;
+    g_last_total_cents = 0;
+    g_last_item_count = 0;
+    g_checkout_done = 0;
+    snprintf(g_payment_url, sizeof(g_payment_url), "PAY: scan item first");
+    snprintf(g_status_text, sizeof(g_status_text), "CART CLEARED");
+}
+
+static int retail_handle_control_payload(const char *payload)
+{
+    const char *value = trim_payload(payload);
+    if (equals_ignore_case(value, "clear") || equals_ignore_case(value, "cart:clear")) {
+        retail_clear_cart();
+        return 1;
+    }
+    if (equals_ignore_case(value, "checkout") || equals_ignore_case(value, "pay") ||
+        equals_ignore_case(value, "cart:checkout")) {
+        if (g_last_total_cents <= 0) {
+            snprintf(g_status_text, sizeof(g_status_text), "CART EMPTY");
+        } else {
+            g_checkout_done = 1;
+            retail_refresh_payment();
+            snprintf(g_status_text, sizeof(g_status_text), "CHECKOUT READY");
+        }
+        return 1;
+    }
+    return 0;
+}
+
+static const struct retail_product *retail_add_payload(const char *payload)
+{
+    const struct retail_product *product = retail_find_product(payload);
+    if (!product) return NULL;
+
+    for (int i = 0; i < g_cart_count; i++) {
+        if (g_cart[i].product == product) {
+            g_cart[i].quantity++;
+            goto done;
+        }
+    }
+    if (g_cart_count >= MAX_CART_ITEMS) return NULL;
+    g_cart[g_cart_count].product = product;
+    g_cart[g_cart_count].quantity = 1;
+    g_cart_count++;
+
+done:
+    g_last_product = product;
+    g_last_price_cents = product->price_cents;
+    g_last_total_cents = retail_total_cents();
+    g_last_item_count = retail_item_count();
+    g_checkout_done = 0;
+    retail_refresh_payment();
+    snprintf(g_status_text, sizeof(g_status_text), "ADDED %s", product->name);
+    return product;
+}
+
+static void draw_fill_rect(uint32_t *fb, int fw, int fh, int x, int y, int w, int h, uint32_t color)
+{
+    int x0 = clamp_int(x, 0, fw - 1);
+    int y0 = clamp_int(y, 0, fh - 1);
+    int x1 = clamp_int(x + w, 0, fw);
+    int y1 = clamp_int(y + h, 0, fh);
+    for (int yy = y0; yy < y1; yy++) {
+        for (int xx = x0; xx < x1; xx++) fb[yy * fw + xx] = color;
+    }
+}
+
+static const uint8_t *font_rows(char c)
+{
+    static const uint8_t blank[7] = {0,0,0,0,0,0,0};
+    static const uint8_t unknown[7] = {14,17,1,2,4,0,4};
+#define FONT_CASE(ch, a,b,c,d,e,f,g) case ch: { static const uint8_t r[7] = {a,b,c,d,e,f,g}; return r; }
+    switch (c) {
+    FONT_CASE('A',14,17,17,31,17,17,17)
+    FONT_CASE('B',30,17,17,30,17,17,30)
+    FONT_CASE('C',14,17,16,16,16,17,14)
+    FONT_CASE('D',30,17,17,17,17,17,30)
+    FONT_CASE('E',31,16,16,30,16,16,31)
+    FONT_CASE('F',31,16,16,30,16,16,16)
+    FONT_CASE('G',14,17,16,23,17,17,15)
+    FONT_CASE('H',17,17,17,31,17,17,17)
+    FONT_CASE('I',14,4,4,4,4,4,14)
+    FONT_CASE('J',7,2,2,2,18,18,12)
+    FONT_CASE('K',17,18,20,24,20,18,17)
+    FONT_CASE('L',16,16,16,16,16,16,31)
+    FONT_CASE('M',17,27,21,21,17,17,17)
+    FONT_CASE('N',17,25,21,19,17,17,17)
+    FONT_CASE('O',14,17,17,17,17,17,14)
+    FONT_CASE('P',30,17,17,30,16,16,16)
+    FONT_CASE('Q',14,17,17,17,21,18,13)
+    FONT_CASE('R',30,17,17,30,20,18,17)
+    FONT_CASE('S',15,16,16,14,1,1,30)
+    FONT_CASE('T',31,4,4,4,4,4,4)
+    FONT_CASE('U',17,17,17,17,17,17,14)
+    FONT_CASE('V',17,17,17,17,17,10,4)
+    FONT_CASE('W',17,17,17,21,21,21,10)
+    FONT_CASE('X',17,17,10,4,10,17,17)
+    FONT_CASE('Y',17,17,10,4,4,4,4)
+    FONT_CASE('Z',31,1,2,4,8,16,31)
+    FONT_CASE('0',14,17,19,21,25,17,14)
+    FONT_CASE('1',4,12,4,4,4,4,14)
+    FONT_CASE('2',14,17,1,2,4,8,31)
+    FONT_CASE('3',30,1,1,14,1,1,30)
+    FONT_CASE('4',2,6,10,18,31,2,2)
+    FONT_CASE('5',31,16,30,1,1,17,14)
+    FONT_CASE('6',6,8,16,30,17,17,14)
+    FONT_CASE('7',31,1,2,4,8,8,8)
+    FONT_CASE('8',14,17,17,14,17,17,14)
+    FONT_CASE('9',14,17,17,15,1,2,12)
+    FONT_CASE(':',0,4,4,0,4,4,0)
+    FONT_CASE('.',0,0,0,0,0,12,12)
+    FONT_CASE('/',1,1,2,4,8,16,16)
+    FONT_CASE('-',0,0,0,31,0,0,0)
+    FONT_CASE('_',0,0,0,0,0,0,31)
+    FONT_CASE('?',14,17,1,2,4,0,4)
+    case ' ': return blank;
+    default: return unknown;
+    }
+#undef FONT_CASE
+}
+
+static char display_char(char c)
+{
+    if (c >= 'a' && c <= 'z') return (char)(c - 'a' + 'A');
+    if (c == '&' || c == '=') return ':';
+    return c;
+}
+
+static void draw_char(uint32_t *fb, int fw, int fh, int x, int y, char c, int scale, uint32_t color)
+{
+    const uint8_t *rows = font_rows(display_char(c));
+    for (int yy = 0; yy < 7; yy++) {
+        for (int xx = 0; xx < 5; xx++) {
+            if (rows[yy] & (1 << (4 - xx))) {
+                draw_fill_rect(fb, fw, fh, x + xx * scale, y + yy * scale, scale, scale, color);
+            }
+        }
+    }
+}
+
+static void draw_text(uint32_t *fb, int fw, int fh, int x, int y, const char *text, int scale, uint32_t color)
+{
+    int cursor = x;
+    int max_chars = (fw - x - 8) / (6 * scale);
+    for (int i = 0; text[i] && i < max_chars; i++) {
+        draw_char(fb, fw, fh, cursor, y, text[i], scale, color);
+        cursor += 6 * scale;
+    }
+}
+
+static void draw_retail_overlay(void)
+{
+    if (!g_drm_map || g_drm_map == MAP_FAILED || g_drm_w <= 0 || g_drm_h <= 0) return;
+
+    uint32_t *fb = (uint32_t *)g_drm_map;
+    int panel_w = g_drm_w < 760 ? g_drm_w - 20 : 740;
+    int panel_h = 178;
+    char line[192];
+    char price[32];
+    char total[32];
+
+    draw_fill_rect(fb, g_drm_w, g_drm_h, 10, 10, panel_w, panel_h, 0xDD101010);
+    draw_rect_rgb(fb, g_drm_w, g_drm_h, 10, 10, panel_w, panel_h, 0xFF00FF00, 3);
+
+    draw_text(fb, g_drm_w, g_drm_h, 24, 24, "SMART RETAIL", 3, 0xFFFFFFFF);
+    if (g_last_product) {
+        retail_money(price, sizeof(price), g_last_price_cents);
+        retail_money(total, sizeof(total), g_last_total_cents);
+        snprintf(line, sizeof(line), "ITEM:%s", g_last_product->name);
+        draw_text(fb, g_drm_w, g_drm_h, 24, 62, line, 2, 0xFFFFFFFF);
+        snprintf(line, sizeof(line), "PRICE:%s", price);
+        draw_text(fb, g_drm_w, g_drm_h, 24, 88, line, 2, 0xFFFFFF00);
+        snprintf(line, sizeof(line), "COUNT:%d  TOTAL:%s", g_last_item_count, total);
+        draw_text(fb, g_drm_w, g_drm_h, 24, 114, line, 2, 0xFF00FF00);
+        snprintf(line, sizeof(line), "STATUS:%s", g_status_text);
+        draw_text(fb, g_drm_w, g_drm_h, 24, 140, line, 2, g_checkout_done ? 0xFF00FFFF : 0xFFFFFFFF);
+        draw_text(fb, g_drm_w, g_drm_h, 24, 166, g_payment_url, 1, 0xFFFFFFFF);
+    } else {
+        draw_text(fb, g_drm_w, g_drm_h, 24, 72, "SCAN PRODUCT QR", 2, 0xFFFFFFFF);
+        draw_text(fb, g_drm_w, g_drm_h, 24, 104, "QR:COLA MILK BREAD", 2, 0xFFFFFF00);
+        draw_text(fb, g_drm_w, g_drm_h, 24, 136, "CONTROL:CHECKOUT CLEAR", 2, 0xFF00FFFF);
     }
 }
 
@@ -675,6 +966,8 @@ int main(int argc, char **argv)
     unsigned int frame = 0, found = 0;
     int64_t t0 = now_ms();
     char last[256] = "";
+    int qr_absent_frames = 0;
+    int saw_qr_this_frame = 0;
 
     while (g_running) {
         unsigned int idx, yl, uvl;
@@ -710,18 +1003,44 @@ int main(int argc, char **argv)
                     draw_qr_outline(&code, cam_w, cam_h);
                 }
                 if (quirc_decode(&code, &data) == QUIRC_SUCCESS) {
-                    if (strcmp((char *)data.payload, last) != 0) {
+                    saw_qr_this_frame = 1;
+                    int same_payload = strcmp((char *)data.payload, last) == 0;
+                    if (!same_payload) {
+                        int handled_control = retail_handle_control_payload((char *)data.payload);
+                        const struct retail_product *product = NULL;
+                        if (!handled_control) product = retail_add_payload((char *)data.payload);
+
                         printf("\n>>> QR CODE: %s <<<\n", data.payload);
                         printf("    ver:%d ecc:%c\n",
                                data.version, "MLHQ"[data.ecc_level]);
+                        if (handled_control) {
+                            printf("    control:%s\n", g_status_text);
+                        } else if (product) {
+                            printf("    added:%s total:%d.%02d\n", product->name,
+                                   g_last_total_cents / 100, g_last_total_cents % 100);
+                        } else {
+                            snprintf(g_status_text, sizeof(g_status_text), "NO PRODUCT MAP");
+                            printf("    no product mapping\n");
+                        }
                         fflush(stdout);
 
                         strncpy(last, (char *)data.payload, sizeof(last) - 1);
+                        last[sizeof(last) - 1] = '\0';
                         found++;
                         if (!continuous) g_running = 0;
                     }
                 }
             }
+        }
+
+        if (saw_qr_this_frame) {
+            qr_absent_frames = 0;
+        } else if (++qr_absent_frames > 12) {
+            last[0] = 0;
+        }
+
+        if (have_display) {
+            draw_retail_overlay();
         }
 
         camera_release(idx);

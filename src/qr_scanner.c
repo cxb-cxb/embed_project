@@ -34,6 +34,7 @@
 #define TERM_COLS       80
 #define TERM_ROWS       30
 #define MAX_QR_BOXES    16
+#define MAX_CART_ITEMS   16
 
 /* ── globals for cleanup ─────────────────────────────────────────── */
 
@@ -73,6 +74,135 @@ struct qr_box {
     int y1;
     int corners[4][2];
 };
+
+struct retail_product {
+    const char *id;
+    const char *name;
+    const char *barcode;
+    int price_cents;
+};
+
+struct cart_line {
+    const struct retail_product *product;
+    int quantity;
+};
+
+static const struct retail_product g_products[] = {
+    {"mineral_water", "Mineral Water", "690100000001", 200},
+    {"cola", "Cola", "690100000002", 350},
+    {"milk", "Milk", "690100000003", 620},
+    {"bread", "Bread", "690100000004", 480},
+    {"instant_noodles", "Instant Noodles", "690100000005", 550},
+    {"chips", "Potato Chips", "690100000006", 680},
+    {"coffee", "Coffee", "690100000007", 990},
+    {"tea", "Tea Drink", "690100000008", 450},
+    {"cookies", "Cookies", "690100000009", 720},
+    {"yogurt", "Yogurt", "690100000010", 580},
+};
+
+static struct cart_line g_cart[MAX_CART_ITEMS];
+static int g_cart_count = 0;
+
+static int ascii_lower(int c)
+{
+    if (c >= 'A' && c <= 'Z') return c + ('a' - 'A');
+    return c;
+}
+
+static int equals_ignore_case(const char *a, const char *b)
+{
+    while (*a && *b) {
+        if (ascii_lower((unsigned char)*a) != ascii_lower((unsigned char)*b)) {
+            return 0;
+        }
+        a++;
+        b++;
+    }
+    return *a == '\0' && *b == '\0';
+}
+
+static const char *trim_payload(const char *payload)
+{
+    while (*payload == ' ' || *payload == '\t' || *payload == '\r' || *payload == '\n') {
+        payload++;
+    }
+    return payload;
+}
+
+static const struct retail_product *retail_find_product(const char *payload)
+{
+    const char *value = trim_payload(payload);
+    const char *prefix = "product:";
+    size_t prefix_len = strlen(prefix);
+
+    if (strncmp(value, prefix, prefix_len) == 0) {
+        value += prefix_len;
+    }
+
+    for (size_t i = 0; i < sizeof(g_products) / sizeof(g_products[0]); i++) {
+        if (equals_ignore_case(value, g_products[i].id) ||
+            equals_ignore_case(value, g_products[i].name) ||
+            strcmp(value, g_products[i].barcode) == 0) {
+            return &g_products[i];
+        }
+    }
+    return NULL;
+}
+
+static int retail_total_cents(void)
+{
+    int total = 0;
+    for (int i = 0; i < g_cart_count; i++) {
+        total += g_cart[i].product->price_cents * g_cart[i].quantity;
+    }
+    return total;
+}
+
+static void print_money(int cents)
+{
+    printf("CNY %d.%02d", cents / 100, cents % 100);
+}
+
+static void retail_add_and_print(const char *payload)
+{
+    const struct retail_product *product = retail_find_product(payload);
+    if (!product) {
+        printf("[retail] QR payload not mapped to a product: %s\n", payload);
+        fflush(stdout);
+        return;
+    }
+
+    for (int i = 0; i < g_cart_count; i++) {
+        if (g_cart[i].product == product) {
+            g_cart[i].quantity++;
+            goto printed;
+        }
+    }
+
+    if (g_cart_count >= MAX_CART_ITEMS) {
+        printf("[retail] Cart is full, cannot add %s\n", product->name);
+        fflush(stdout);
+        return;
+    }
+    g_cart[g_cart_count].product = product;
+    g_cart[g_cart_count].quantity = 1;
+    g_cart_count++;
+
+printed:
+    printf("\n[retail] Added: %s  unit=", product->name);
+    print_money(product->price_cents);
+    printf("\n[retail] Cart:\n");
+    for (int i = 0; i < g_cart_count; i++) {
+        printf("  - %s x%d = ", g_cart[i].product->name, g_cart[i].quantity);
+        print_money(g_cart[i].product->price_cents * g_cart[i].quantity);
+        printf("\n");
+    }
+    printf("[retail] Total: ");
+    print_money(retail_total_cents());
+    printf("\n");
+    fflush(stdout);
+}
+
 
 static int clamp_int(int v, int lo, int hi)
 {
@@ -361,29 +491,32 @@ int main(int argc, char **argv)
     unsigned int width  = DEFAULT_WIDTH;
     unsigned int height = DEFAULT_HEIGHT;
     int continuous = 0;   /* 0 = exit on first QR, 1 = keep scanning */
+    int retail_mode = 0;
     int terminal_preview = 0;
     unsigned int preview_interval = 5;
     int opt;
 
-    while ((opt = getopt(argc, argv, "d:W:H:ctp:h")) != -1) {
+    while ((opt = getopt(argc, argv, "d:W:H:ctrp:h")) != -1) {
         switch (opt) {
         case 'd': device = optarg; break;
         case 'W': width  = (unsigned int)atoi(optarg); break;
         case 'H': height = (unsigned int)atoi(optarg); break;
         case 'c': continuous = 1; break;
         case 't': terminal_preview = 1; continuous = 1; break;
+        case 'r': retail_mode = 1; continuous = 1; break;
         case 'p':
             preview_interval = (unsigned int)atoi(optarg);
             if (preview_interval == 0) preview_interval = 1;
             break;
         case 'h':
         default:
-            printf("Usage: %s [-d device] [-W width] [-H height] [-c] [-t] [-p frames]\n", argv[0]);
+            printf("Usage: %s [-d device] [-W width] [-H height] [-c] [-t] [-r] [-p frames]\n", argv[0]);
             printf("  -d  video device    (default: %s)\n", CAMERA_DEV);
             printf("  -W  capture width   (default: %u)\n", DEFAULT_WIDTH);
             printf("  -H  capture height  (default: %u)\n", DEFAULT_HEIGHT);
             printf("  -c  continuous mode (keep scanning, don't exit on first QR)\n");
             printf("  -t  terminal preview with QR boxes\n");
+            printf("  -r  retail mode: map QR payloads to products and print cart totals\n");
             printf("  -p  preview refresh interval in frames (default: %u)\n", preview_interval);
             return 1;
         }
@@ -430,12 +563,16 @@ int main(int argc, char **argv)
     int64_t        t_start = now_ms();
     int            found   = 0;
     char           last_payload[256] = "";
+    int            qr_absent_frames = 0;
+    int            saw_qr_this_frame = 0;
     struct qr_box  boxes[MAX_QR_BOXES];
 
     while (g_running) {
         unsigned int idx, y_len;
         uint8_t     *y_plane;
         int box_count = 0;
+
+        saw_qr_this_frame = 0;
 
         if (camera_grab(&idx, &y_plane, &y_len) < 0) {
             if (!g_running) break;
@@ -468,9 +605,10 @@ int main(int argc, char **argv)
                 }
 
                 if (err == QUIRC_SUCCESS) {
-                    /* avoid printing the same payload repeatedly */
-                    if (strncmp((char *)data.payload, last_payload,
-                                sizeof(last_payload) - 1) != 0) {
+                    saw_qr_this_frame = 1;
+                    int same_payload = strncmp((char *)data.payload, last_payload,
+                                               sizeof(last_payload) - 1) == 0;
+                    if (!same_payload) {
                         struct qr_box decoded_box;
                         code_to_box(&code, 1, &decoded_box);
                         printf("\n>>> QR CODE FOUND <<<\n");
@@ -493,6 +631,9 @@ int main(int argc, char **argv)
                                 sizeof(last_payload) - 1);
                         last_payload[sizeof(last_payload) - 1] = '\0';
                         found++;
+                        if (retail_mode) {
+                            retail_add_and_print((char *)data.payload);
+                        }
 
                         if (!continuous) {
                             g_running = 0;
@@ -502,6 +643,12 @@ int main(int argc, char **argv)
                     }
                 }
             }
+        }
+
+        if (saw_qr_this_frame) {
+            qr_absent_frames = 0;
+        } else if (++qr_absent_frames > 12) {
+            last_payload[0] = 0;
         }
 
         if (terminal_preview && (frame % preview_interval == 0)) {

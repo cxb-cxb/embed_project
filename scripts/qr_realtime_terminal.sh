@@ -13,4 +13,4 @@ if ! pgrep rkaiq_3A_server >/dev/null 2>&1; then
   sleep 1
 fi
 
-exec ./bin/qr_scanner -d /dev/video5 -W 800 -H 600 -t -p 5 "$@"
+exec ./bin/qr_scanner -d /dev/video5 -W 800 -H 600 -r "$@"

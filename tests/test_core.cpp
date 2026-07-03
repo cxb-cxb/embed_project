@@ -37,6 +37,14 @@ void test_recognition() {
     expect(byQr.has_value(), "qr recognition should return a product");
     expect(byQr->product.id == "instant_noodles", "qr should recognize noodles");
 
+    auto byPlainQr = recognizer.recognize({ "", "cola", "" }, catalog);
+    expect(byPlainQr.has_value(), "plain qr product id should return a product");
+    expect(byPlainQr->product.id == "cola", "plain qr product id should recognize cola");
+
+    auto byQrBarcode = recognizer.recognize({ "", "690100000003", "" }, catalog);
+    expect(byQrBarcode.has_value(), "qr barcode payload should return a product");
+    expect(byQrBarcode->product.id == "milk", "qr barcode payload should recognize milk");
+
     auto byVisual = recognizer.recognize({ "", "", "red soda can" }, catalog);
     expect(byVisual.has_value(), "visual keyword should return a product");
     expect(byVisual->product.id == "cola", "visual keyword should recognize cola");

@@ -7,7 +7,7 @@ std::string productIdFromQr(const std::string& payload) {
     if (payload.find(prefix) == 0) {
         return payload.substr(prefix.size());
     }
-    return "";
+    return payload;
 }
 
 }  // namespace
@@ -25,6 +25,12 @@ std::optional<RecognitionResult> RetailRecognizer::recognize(const RecognitionIn
         if (!id.empty()) {
             if (const auto* product = catalog.findById(id)) {
                 return RecognitionResult{*product, 0.98f, "qr"};
+            }
+            if (const auto* product = catalog.findByBarcode(id)) {
+                return RecognitionResult{*product, 0.98f, "qr"};
+            }
+            if (const auto* product = catalog.findByVisualText(id)) {
+                return RecognitionResult{*product, 0.90f, "qr"};
             }
         }
     }
