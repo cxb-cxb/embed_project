@@ -75,4 +75,21 @@ scripts/camera_preview_lvds.sh
 sh scripts/camera_preview_lvds.sh
 ```
 
+## 板端二维码识别 + LVDS 实时显示
+
+当前推荐的扫码演示入口是：
+
+```bash
+cd /userdata/Embed_project
+sh scripts/qr_realtime_lvds.sh
+```
+
+该脚本会启动 `/userdata/Embed_project/bin/qr_scanner_display`，同时使用摄像头和 LVDS 屏幕。2026-07-04 已验证 `product:cola` 二维码可以识别成功，并在屏幕上显示实时摄像头画面、绿色二维码框、商品信息和总价。
+
+停止程序：
+
+```bash
+pkill -9 qr_scanner_display
+```
+
 详细二次开发说明见 `docs/二次开发使用文档.md`。
