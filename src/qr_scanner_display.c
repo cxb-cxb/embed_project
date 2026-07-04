@@ -217,9 +217,11 @@ static const struct retail_product *g_last_product = NULL;
 static int g_last_price_cents = 0;
 static int g_last_total_cents = 0;
 static int g_last_item_count = 0;
-static char g_payment_url[160] = "PAY: scan item first";
+static char g_order_id[48] = "ORDER: pending";
+static char g_payment_url[160] = "PAY: scan checkout";
 static char g_status_text[80] = "READY";
 static int g_checkout_done = 0;
+static unsigned int g_order_seq = 0;
 
 static int ascii_lower(int c)
 {
@@ -279,10 +281,19 @@ static void retail_money(char *out, size_t out_size, int cents)
     snprintf(out, out_size, "CNY %d.%02d", cents / 100, cents % 100);
 }
 
-static void retail_refresh_payment(void)
+static void retail_reset_payment(void)
 {
+    snprintf(g_order_id, sizeof(g_order_id), "ORDER: pending");
+    snprintf(g_payment_url, sizeof(g_payment_url), "PAY: scan checkout");
+}
+
+static void retail_create_payment_order(void)
+{
+    g_order_seq++;
+    snprintf(g_order_id, sizeof(g_order_id), "ORDER:QSM%04u", g_order_seq);
     snprintf(g_payment_url, sizeof(g_payment_url),
-             "PAY:https://pay.example.local/qsm368?amount=%d", g_last_total_cents);
+             "PAY:https://pay.example.local/qsm368?order=QSM%04u&amount=%d",
+             g_order_seq, g_last_total_cents);
 }
 
 static void retail_clear_cart(void)
@@ -294,7 +305,7 @@ static void retail_clear_cart(void)
     g_last_total_cents = 0;
     g_last_item_count = 0;
     g_checkout_done = 0;
-    snprintf(g_payment_url, sizeof(g_payment_url), "PAY: scan item first");
+    retail_reset_payment();
     snprintf(g_status_text, sizeof(g_status_text), "CART CLEARED");
 }
 
@@ -308,10 +319,12 @@ static int retail_handle_control_payload(const char *payload)
     if (equals_ignore_case(value, "checkout") || equals_ignore_case(value, "pay") ||
         equals_ignore_case(value, "cart:checkout")) {
         if (g_last_total_cents <= 0) {
+            g_checkout_done = 0;
+            retail_reset_payment();
             snprintf(g_status_text, sizeof(g_status_text), "CART EMPTY");
         } else {
             g_checkout_done = 1;
-            retail_refresh_payment();
+            retail_create_payment_order();
             snprintf(g_status_text, sizeof(g_status_text), "CHECKOUT READY");
         }
         return 1;
@@ -341,7 +354,7 @@ done:
     g_last_total_cents = retail_total_cents();
     g_last_item_count = retail_item_count();
     g_checkout_done = 0;
-    retail_refresh_payment();
+    retail_reset_payment();
     snprintf(g_status_text, sizeof(g_status_text), "ADDED %s", product->name);
     return product;
 }
@@ -446,7 +459,7 @@ static void draw_retail_overlay(void)
 
     uint32_t *fb = (uint32_t *)g_drm_map;
     int panel_w = g_drm_w < 760 ? g_drm_w - 20 : 740;
-    int panel_h = 178;
+    int panel_h = 214;
     char line[192];
     char price[32];
     char total[32];
@@ -466,7 +479,8 @@ static void draw_retail_overlay(void)
         draw_text(fb, g_drm_w, g_drm_h, 24, 114, line, 2, 0xFF00FF00);
         snprintf(line, sizeof(line), "STATUS:%s", g_status_text);
         draw_text(fb, g_drm_w, g_drm_h, 24, 140, line, 2, g_checkout_done ? 0xFF00FFFF : 0xFFFFFFFF);
-        draw_text(fb, g_drm_w, g_drm_h, 24, 166, g_payment_url, 1, 0xFFFFFFFF);
+        draw_text(fb, g_drm_w, g_drm_h, 24, 166, g_order_id, 1, g_checkout_done ? 0xFF00FFFF : 0xFFFFFFFF);
+        draw_text(fb, g_drm_w, g_drm_h, 24, 190, g_payment_url, 1, 0xFFFFFFFF);
     } else {
         draw_text(fb, g_drm_w, g_drm_h, 24, 72, "SCAN PRODUCT QR", 2, 0xFFFFFFFF);
         draw_text(fb, g_drm_w, g_drm_h, 24, 104, "QR:COLA MILK BREAD", 2, 0xFFFFFF00);

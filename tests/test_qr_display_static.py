@@ -21,6 +21,13 @@ class QrDisplayStaticTests(unittest.TestCase):
             "payload decode/new-payload filtering can suppress drawing.",
         )
 
+    def test_checkout_payment_summary_contains_order_and_amount(self):
+        code = SRC.read_text(encoding="utf-8", errors="ignore")
+
+        self.assertIn("ORDER:QSM%04u", code)
+        self.assertIn("order=QSM%04u&amount=%d", code)
+        self.assertIn("retail_create_payment_order();", code)
+
 
 if __name__ == "__main__":
     unittest.main()

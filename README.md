@@ -84,7 +84,17 @@ cd /userdata/Embed_project
 sh scripts/qr_realtime_lvds.sh
 ```
 
-该脚本会启动 `/userdata/Embed_project/bin/qr_scanner_display`，同时使用摄像头和 LVDS 屏幕。2026-07-04 已验证 `product:cola` 二维码可以识别成功，并在屏幕上显示实时摄像头画面、绿色二维码框、商品信息和总价。
+该脚本会启动 `/userdata/Embed_project/bin/qr_scanner_display`，同时使用摄像头和 LVDS 屏幕。
+
+2026-07-04 已验证完整演示闭环：
+
+```text
+product:cola -> added:Cola total:3.50
+checkout     -> CHECKOUT READY
+clear        -> CART CLEARED
+```
+
+LVDS 屏幕会显示实时摄像头画面、绿色二维码框、商品信息、总价、结算状态、订单号和支付链接摘要。测试二维码可用任意二维码生成器生成，内容分别填入 `product:cola`、`checkout`、`clear`。
 
 停止程序：
 
