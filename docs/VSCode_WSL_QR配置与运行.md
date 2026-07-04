@@ -120,24 +120,41 @@ ADB: stop camera tasks
 
 ## 5. 当前 LVDS 状态
 
+2026-07-04 已刷入屏幕修复固件中的 `boot.img` 和 `uboot.img` 后，LVDS 屏幕已恢复显示。
+
+当前修复固件下的 DRM 参数为：
+
+```text
+LVDS connector id: 154
+LVDS mode: 800x1280
+可用 plane id: 73
+输出格式: BGRx
+```
+
 摄像头到 LVDS 的 GStreamer 预览使用：
 
 ```bash
 sh /userdata/Embed_project/scripts/camera_preview_lvds.sh
 ```
 
-这个链路之前已经验证可用。
+这个链路当前已验证可用。脚本内部会把摄像头 NV12 画面转换为 BGRx 后输出到 `plane-id=73`。
 
-`qr_scanner_display` 是 DRM 直显版，目前短测时提示：
+如果需要单独测试 LVDS 彩条，可在板端运行：
 
-```text
-No connected display found
+```bash
+gst-launch-1.0 -v videotestsrc pattern=smpte is-live=true ! \
+  video/x-raw,width=800,height=1280,framerate=30/1 ! \
+  videoconvert ! video/x-raw,format=BGRx ! \
+  kmssink driver-name=rockchip connector-id=154 plane-id=73 force-modesetting=true fullscreen=true sync=false
 ```
 
-因此现阶段推荐：
+注意：旧固件中曾使用 `plane-id=89` 和 NV12 直出；修复固件下该组合会报 `failed to configure video mode`，应改用 `plane-id=73` 和 BGRx。
 
-- 比赛调试 QR：优先使用 `ADB: run QR terminal preview`
-- 展示摄像头画面：使用 `ADB: run camera LVDS preview`
+现阶段推荐：
+
+- 比赛调试 QR：可以使用 `ADB: run QR terminal preview` 或电脑端预览工具。
+- 展示摄像头画面：使用 `ADB: run camera LVDS preview`。
+- LVDS 已恢复时，可继续使用 `qr_scanner_display` 做屏幕端零售展示。
 
 注意：摄像头同一时间只能被一个程序占用。切换任务前先运行：
 
