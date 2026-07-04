@@ -77,14 +77,32 @@ sh scripts/camera_preview_lvds.sh
 
 ## 板端二维码识别 + LVDS 实时显示
 
-当前推荐的扫码演示入口是：
+当前推荐的扫码演示入口是 Windows 一键脚本：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\scripts\start-lvds-demo.ps1
+```
+
+后台启动并打印日志：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\scripts\start-lvds-demo.ps1 -Background
+```
+
+停止演示：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\scripts\stop-lvds-demo.ps1
+```
+
+板端手动入口是：
 
 ```bash
 cd /userdata/Embed_project
-sh scripts/qr_realtime_lvds.sh
+sh scripts/demo_lvds_start.sh
 ```
 
-该脚本会启动 `/userdata/Embed_project/bin/qr_scanner_display`，同时使用摄像头和 LVDS 屏幕。
+该脚本会设置背光、停止旧摄像头进程、启动相机 3A 服务，然后运行 `/userdata/Embed_project/bin/qr_scanner_display`，同时使用摄像头和 LVDS 屏幕。
 
 2026-07-04 已验证完整演示闭环：
 
@@ -96,10 +114,30 @@ clear        -> CART CLEARED
 
 LVDS 屏幕会显示实时摄像头画面、绿色二维码框、商品信息、总价、结算状态、订单号和支付链接摘要。测试二维码可用任意二维码生成器生成，内容分别填入 `product:cola`、`checkout`、`clear`。
 
-停止程序：
+## 演示二维码包
 
-```bash
-pkill -9 qr_scanner_display
+仓库内提供测试二维码生成脚本：
+
+```powershell
+python -m pip install -r requirements-tools.txt
+python tools\generate_demo_qr.py
+```
+
+默认输出目录：
+
+```text
+outputs/demo_qr/
+```
+
+默认包含：
+
+```text
+qr_product_cola.png
+qr_product_milk.png
+qr_product_bread.png
+qr_product_water.png
+qr_checkout.png
+qr_clear.png
 ```
 
 详细二次开发说明见 `docs/二次开发使用文档.md`。

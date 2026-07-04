@@ -73,6 +73,30 @@
       "type": "shell",
       "command": "ADB=${ADB:-/mnt/c/tmp/RKDevTool_Release_v2.92/RKDevTool_Release_v2.92/bin/adb.exe}; \"$ADB\" shell 'pkill -9 gst-launch-1.0 2>/dev/null || true; pkill -9 qr_scanner 2>/dev/null || true; pkill -9 qr_scanner_display 2>/dev/null || true'",
       "problemMatcher": []
+    },
+    {
+      "label": "Demo: start LVDS QR retail",
+      "type": "shell",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File tools/scripts/start-lvds-demo.ps1",
+      "problemMatcher": []
+    },
+    {
+      "label": "Demo: start LVDS QR retail background",
+      "type": "shell",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File tools/scripts/start-lvds-demo.ps1 -Background",
+      "problemMatcher": []
+    },
+    {
+      "label": "Demo: stop LVDS QR retail",
+      "type": "shell",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File tools/scripts/stop-lvds-demo.ps1",
+      "problemMatcher": []
+    },
+    {
+      "label": "Demo: generate QR package",
+      "type": "shell",
+      "command": "python tools/generate_demo_qr.py",
+      "problemMatcher": []
     }
   ]
 }

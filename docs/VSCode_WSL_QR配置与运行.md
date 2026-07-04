@@ -40,6 +40,10 @@ ADB: run smart retail
 ADB: run QR terminal preview
 ADB: run camera LVDS preview
 ADB: stop camera tasks
+Demo: start LVDS QR retail
+Demo: start LVDS QR retail background
+Demo: stop LVDS QR retail
+Demo: generate QR package
 ```
 
 ## 3. 推荐操作顺序
@@ -76,10 +80,23 @@ ADB: run QR terminal preview
 ADB: run camera LVDS preview
 ```
 
+运行比赛演示：
+
+```text
+Demo: start LVDS QR retail
+```
+
+生成演示二维码包：
+
+```text
+Demo: generate QR package
+```
+
 停止摄像头相关进程：
 
 ```text
 ADB: stop camera tasks
+Demo: stop LVDS QR retail
 ```
 
 ## 4. 当前 QR 终端预览状态
@@ -154,7 +171,7 @@ gst-launch-1.0 -v videotestsrc pattern=smpte is-live=true ! \
 
 - 比赛调试 QR：可以使用 `ADB: run QR terminal preview` 或电脑端预览工具。
 - 展示摄像头画面：使用 `ADB: run camera LVDS preview`。
-- LVDS 已恢复时，可继续使用 `qr_scanner_display` 做屏幕端零售展示。
+- LVDS 已恢复时，优先使用 `Demo: start LVDS QR retail` 做屏幕端零售展示。
 
 注意：摄像头同一时间只能被一个程序占用。切换任务前先运行：
 
