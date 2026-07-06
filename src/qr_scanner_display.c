@@ -475,11 +475,13 @@ static void draw_retail_overlay(void)
     uint32_t *fb = (uint32_t *)g_drm_map;
     int panel_w = g_drm_w < 760 ? g_drm_w - 20 : 740;
     int panel_h = 214;
+    size_t map_len = (size_t)g_drm_pitch * (size_t)g_drm_h;
     char line[192];
     char price[32];
     char total[32];
 
-    draw_fill_rect(fb, g_drm_w, g_drm_h, 10, 10, panel_w, panel_h, 0xDD101010);
+    draw_fill_rect(fb, g_drm_w, g_drm_h, 10, 10, panel_w, panel_h, 0xFF000000);
+    draw_fill_rect(fb, g_drm_w, g_drm_h, 16, 16, panel_w - 12, panel_h - 12, 0xFF050505);
     draw_rect_rgb(fb, g_drm_w, g_drm_h, 10, 10, panel_w, panel_h, 0xFF00FF00, 3);
 
     draw_text(fb, g_drm_w, g_drm_h, 24, 24, "SMART RETAIL", 3, 0xFFFFFFFF);
@@ -498,8 +500,11 @@ static void draw_retail_overlay(void)
         draw_text(fb, g_drm_w, g_drm_h, 24, 190, g_payment_url, 1, 0xFFFFFFFF);
     } else {
         draw_text(fb, g_drm_w, g_drm_h, 24, 72, "SCAN PRODUCT QR", 2, 0xFFFFFFFF);
-        draw_text(fb, g_drm_w, g_drm_h, 24, 104, "QR:COLA MILK BREAD", 2, 0xFFFFFF00);
+        draw_text(fb, g_drm_w, g_drm_h, 24, 104, "QR:10 PRODUCT TYPES", 2, 0xFFFFFF00);
         draw_text(fb, g_drm_w, g_drm_h, 24, 136, "CONTROL:CHECKOUT CLEAR", 2, 0xFF00FFFF);
+    }
+    if (map_len > 0) {
+        msync(g_drm_map, map_len, MS_ASYNC);
     }
 }
 
