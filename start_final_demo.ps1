@@ -38,4 +38,4 @@ Start-Process powershell -ArgumentList @(
 ) -WorkingDirectory $ProjectRoot
 
 Write-Host "Demo windows started." -ForegroundColor Green
-Write-Host "In the voice window, press Enter and ask: 这个多少钱"
+Write-Host "In the voice window, press Enter and ask the price question."
