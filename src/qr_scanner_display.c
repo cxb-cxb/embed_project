@@ -986,6 +986,8 @@ int main(int argc, char **argv)
     while (g_running) {
         unsigned int idx, yl, uvl;
         uint8_t *yp, *uvp;
+        saw_qr_this_frame = 0;
+
         if (camera_grab(&idx, &yp, &yl, &uvp, &uvl) < 0) {
             if (!g_running) break;
             continue;

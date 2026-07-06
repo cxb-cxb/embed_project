@@ -28,6 +28,20 @@ class QrDisplayStaticTests(unittest.TestCase):
         self.assertIn("order=QSM%04u&amount=%d", code)
         self.assertIn("retail_create_payment_order();", code)
 
+    def test_qr_seen_flag_resets_each_frame(self):
+        code = SRC.read_text(encoding="utf-8", errors="ignore")
+
+        loop_pos = code.index("while (g_running) {")
+        reset_pos = code.index("saw_qr_this_frame = 0;", loop_pos)
+        grab_pos = code.index("camera_grab(&idx, &yp, &yl, &uvp, &uvl)", loop_pos)
+
+        self.assertLess(
+            reset_pos,
+            grab_pos,
+            "The per-frame QR seen flag must reset before camera_grab so removing "
+            "a QR from the scan area releases duplicate suppression.",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
