@@ -53,6 +53,9 @@
 #define MAX_BUFFERS     4
 #define LVDS_CONNECTOR_ID  154
 #define MAX_CART_ITEMS 16
+#define OVERLAY_PANEL_X 10
+#define OVERLAY_PANEL_Y 10
+#define OVERLAY_PANEL_H 214
 
 /* ── 全局变量 ────────────────────────────────────────────────────── */
 
@@ -101,6 +104,11 @@ static inline int clamp_int(int v, int lo, int hi)
     return v < lo ? lo : (v > hi ? hi : v);
 }
 
+static int overlay_panel_width_for(int display_w)
+{
+    return display_w < 760 ? display_w - 20 : 740;
+}
+
 /* ── NV12 → XRGB8888 软转 ────────────────────────────────────────── */
 
 static void nv12_to_xrgb(uint8_t *y, uint8_t *uv,
@@ -146,6 +154,12 @@ static void nv12_to_xrgb_scaled(uint8_t *y, uint8_t *uv,
         uint8_t *uv_row = uv + (sy / 2) * uvs;
         uint32_t *dst_row = dst + j * ds;
         for (int i = 0; i < dst_w; i++) {
+            int panel_w = overlay_panel_width_for(dst_w);
+            if (i >= OVERLAY_PANEL_X && i < OVERLAY_PANEL_X + panel_w &&
+                j >= OVERLAY_PANEL_Y && j < OVERLAY_PANEL_Y + OVERLAY_PANEL_H) {
+                dst_row[i] = 0xFF000000U;
+                continue;
+            }
             int sx = (int)((int64_t)i * src_w / dst_w);
             int uvx = sx & ~1;
             int Y = y_row[sx];
@@ -473,16 +487,16 @@ static void draw_retail_overlay(void)
     if (!g_drm_map || g_drm_map == MAP_FAILED || g_drm_w <= 0 || g_drm_h <= 0) return;
 
     uint32_t *fb = (uint32_t *)g_drm_map;
-    int panel_w = g_drm_w < 760 ? g_drm_w - 20 : 740;
-    int panel_h = 214;
+    int panel_w = overlay_panel_width_for(g_drm_w);
+    int panel_h = OVERLAY_PANEL_H;
     size_t map_len = (size_t)g_drm_pitch * (size_t)g_drm_h;
     char line[192];
     char price[32];
     char total[32];
 
-    draw_fill_rect(fb, g_drm_w, g_drm_h, 10, 10, panel_w, panel_h, 0xFF000000);
-    draw_fill_rect(fb, g_drm_w, g_drm_h, 16, 16, panel_w - 12, panel_h - 12, 0xFF050505);
-    draw_rect_rgb(fb, g_drm_w, g_drm_h, 10, 10, panel_w, panel_h, 0xFF00FF00, 3);
+    draw_fill_rect(fb, g_drm_w, g_drm_h, OVERLAY_PANEL_X, OVERLAY_PANEL_Y, panel_w, panel_h, 0xFF000000);
+    draw_fill_rect(fb, g_drm_w, g_drm_h, OVERLAY_PANEL_X + 6, OVERLAY_PANEL_Y + 6, panel_w - 12, panel_h - 12, 0xFF050505);
+    draw_rect_rgb(fb, g_drm_w, g_drm_h, OVERLAY_PANEL_X, OVERLAY_PANEL_Y, panel_w, panel_h, 0xFF00FF00, 3);
 
     draw_text(fb, g_drm_w, g_drm_h, 24, 24, "SMART RETAIL", 3, 0xFFFFFFFF);
     if (g_last_product) {
