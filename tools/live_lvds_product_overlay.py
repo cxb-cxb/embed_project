@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import threading
 import time
 from collections import Counter
 from pathlib import Path
@@ -22,11 +23,27 @@ RUNTIME_DIR = Path("D:/qsm_embed_dataset/lvds_overlay_runtime")
 CURRENT_PRODUCT_STATE = RUNTIME_DIR / "current_product.json"
 VOICE_REPLY_STATE = RUNTIME_DIR / "voice_reply.json"
 REMOTE_OVERLAY_PNG = "/tmp/live_product_overlay_00000.png"
+REMOTE_OVERLAY_RAW = "/tmp/live_product_overlay.fb"
+REMOTE_STREAM_PGM = "/tmp/live_product_overlay_stream.pgm"
+REMOTE_PREVIEW_PATTERN = "/tmp/live_product_preview_%05d.jpg"
 KMS_PROCESS: subprocess.Popen | None = None
+CAMERA_PROCESS: subprocess.Popen | None = None
+CLASSIFIER_STOP = threading.Event()
 ADB = (
     Path.home()
     / "AppData/Local/Microsoft/WinGet/Packages/"
     / "Google.PlatformTools_Microsoft.Winget.Source_8wekyb3d8bbwe/platform-tools/adb.exe"
+)
+
+CAMERA_CLEANUP_CMD = (
+    "for p in $(ps | grep '[l]ive_product_overlay_stream' | awk '{print $1}'); do "
+    "[ \"$p\" = \"$$\" ] || kill -9 \"$p\" 2>/dev/null || true; "
+    "done; "
+    "pkill -9 qr_scanner_display 2>/dev/null || true; "
+    "pkill -9 camera_pgm_stream 2>/dev/null || true; "
+    "pkill -9 gst-launch-1.0 2>/dev/null || true; "
+    "fuser -k /dev/video5 2>/dev/null || true; "
+    "sleep 1"
 )
 
 ZH_NAMES = {
@@ -95,6 +112,162 @@ def parse_first_pgm(path: Path) -> Image.Image:
     if len(frame) != width * height:
         raise RuntimeError("truncated PGM frame")
     return Image.frombytes("L", (width, height), frame)
+
+
+def read_exact(stream, size: int) -> bytes:
+    chunks: list[bytes] = []
+    remaining = size
+    while remaining > 0:
+        chunk = stream.read(remaining)
+        if not chunk:
+            raise EOFError("camera stream ended")
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def read_stream_token(stream) -> bytes:
+    token = bytearray()
+    while True:
+        char = stream.read(1)
+        if not char:
+            if token:
+                return bytes(token)
+            raise EOFError("camera stream ended")
+        if char in b" \t\r\n":
+            if token:
+                return bytes(token)
+            continue
+        token.extend(char)
+
+
+def read_pgm_frame_from_stream(stream) -> Image.Image:
+    magic = read_stream_token(stream)
+    if magic != b"P5":
+        raise RuntimeError(f"unexpected PGM magic from stream: {magic!r}")
+    width = int(read_stream_token(stream))
+    height = int(read_stream_token(stream))
+    maxval = read_stream_token(stream)
+    if maxval != b"255":
+        raise RuntimeError(f"unsupported PGM maxval from stream: {maxval!r}")
+    frame = read_exact(stream, width * height)
+    return Image.frombytes("L", (width, height), frame)
+
+
+def start_camera_stream(width: int, height: int) -> subprocess.Popen:
+    global CAMERA_PROCESS
+    if CAMERA_PROCESS is not None and CAMERA_PROCESS.poll() is None:
+        return CAMERA_PROCESS
+
+    run_adb(["shell", CAMERA_CLEANUP_CMD], check=False)
+    remote_cmd = (
+        "cd /userdata/Embed_project && "
+        f"./bin/camera_pgm_stream -d /dev/video5 -W {width} -H {height}"
+    )
+    CAMERA_PROCESS = subprocess.Popen(
+        [str(ADB), "exec-out", "sh", "-c", remote_cmd],
+        cwd=BASE_DIR,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    if CAMERA_PROCESS.stdout is None:
+        raise RuntimeError("failed to open camera stream stdout")
+    time.sleep(0.3)
+    return CAMERA_PROCESS
+
+
+def start_remote_frame_writer(width: int, height: int) -> None:
+    global CAMERA_PROCESS
+    if CAMERA_PROCESS is not None and CAMERA_PROCESS.poll() is None:
+        return
+
+    run_adb(["shell", CAMERA_CLEANUP_CMD], check=False)
+    frame_bytes = len(f"P5\n{width} {height}\n255\n".encode("ascii")) + width * height
+    command = (
+        "cd /userdata/Embed_project || exit 1; "
+        f"rm -f {REMOTE_STREAM_PGM} {REMOTE_STREAM_PGM}.tmp /tmp/live_product_overlay_stream.err; "
+        f"./bin/camera_pgm_stream -d /dev/video5 -W {width} -H {height} 2>/tmp/live_product_overlay_stream.err | "
+        "while true; do "
+        f"dd iflag=fullblock bs={frame_bytes} count=1 of={REMOTE_STREAM_PGM}.tmp 2>/dev/null || break; "
+        f"bytes=$(wc -c < {REMOTE_STREAM_PGM}.tmp 2>/dev/null || echo 0); "
+        f"[ \"$bytes\" -eq {frame_bytes} ] || break; "
+        f"mv {REMOTE_STREAM_PGM}.tmp {REMOTE_STREAM_PGM}; "
+        "done"
+    )
+    CAMERA_PROCESS = subprocess.Popen(
+        [str(ADB), "shell", command],
+        cwd=BASE_DIR,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    time.sleep(0.6)
+
+
+def pull_latest_remote_frame(local_path: Path) -> Image.Image:
+    for _ in range(20):
+        result = run_adb(["shell", f"test -s {REMOTE_STREAM_PGM}"], capture=True, check=False)
+        if result.returncode == 0:
+            break
+        time.sleep(0.05)
+    else:
+        err = run_adb(["shell", "cat /tmp/live_product_overlay_stream.err 2>/dev/null || true"], capture=True, check=False)
+        detail = err.stdout.decode("utf-8", errors="ignore").strip()
+        if detail:
+            raise RuntimeError(f"no live frame produced: {detail}")
+        raise RuntimeError("no live frame produced")
+    run_adb(["pull", REMOTE_STREAM_PGM, str(local_path)], capture=True, check=True)
+    return parse_first_pgm(local_path)
+
+
+def start_board_preview_pipeline(width: int, height: int) -> None:
+    global KMS_PROCESS
+    if KMS_PROCESS is not None and KMS_PROCESS.poll() is None:
+        return
+
+    run_adb(["shell", CAMERA_CLEANUP_CMD], check=False)
+    command = (
+        "rm -f /tmp/live_product_preview_*.jpg /tmp/live_product_preview.err; "
+        "exec gst-launch-1.0 -q "
+        f"v4l2src device=/dev/video5 ! video/x-raw,width={width},height={height},format=NV12,framerate=30/1 ! "
+        "tee name=t "
+        "t. ! queue ! videoconvert ! videoscale add-borders=true ! "
+        "video/x-raw,format=BGRx,width=800,height=1280 ! "
+        "kmssink driver-name=rockchip connector-id=154 plane-id=73 "
+        "force-modesetting=false fullscreen=true sync=false "
+        "t. ! queue leaky=downstream max-size-buffers=1 ! videorate ! "
+        "video/x-raw,framerate=1/1 ! jpegenc ! "
+        f"multifilesink location={REMOTE_PREVIEW_PATTERN} max-files=8 "
+        "2>/tmp/live_product_preview.err"
+    )
+    KMS_PROCESS = subprocess.Popen(
+        [str(ADB), "shell", command],
+        cwd=BASE_DIR,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    time.sleep(1.0)
+
+
+def pull_latest_preview_frame(local_path: Path) -> Image.Image:
+    latest = ""
+    for _ in range(30):
+        result = run_adb(
+            ["shell", "ls -t /tmp/live_product_preview_*.jpg 2>/dev/null | head -1"],
+            capture=True,
+            check=False,
+        )
+        latest = result.stdout.decode("utf-8", errors="ignore").strip()
+        if latest:
+            break
+        time.sleep(0.1)
+    if not latest:
+        err = run_adb(["shell", "cat /tmp/live_product_preview.err 2>/dev/null || true"], capture=True, check=False)
+        detail = err.stdout.decode("utf-8", errors="ignore").strip()
+        if detail:
+            raise RuntimeError(f"no preview frame produced: {detail}")
+        raise RuntimeError("no preview frame produced")
+    run_adb(["pull", latest, str(local_path)], capture=True, check=True)
+    return Image.open(local_path).convert("L")
 
 
 def image_to_feature(image: Image.Image) -> np.ndarray:
@@ -332,9 +505,9 @@ def ensure_kms_display() -> None:
         "pkill -9 gst-launch-1.0 2>/dev/null || true; "
         "exec gst-launch-1.0 -q "
         "multifilesrc location=/tmp/live_product_overlay_%05d.png start-index=0 stop-index=0 loop=true "
-        "caps='image/png,framerate=1/1' ! "
+        "caps='image/png,framerate=15/1' ! "
         "pngdec ! videoconvert ! "
-        "video/x-raw,format=BGRx,width=800,height=1280,framerate=1/1 ! "
+        "video/x-raw,format=BGRx,width=800,height=1280,framerate=15/1 ! "
         "kmssink driver-name=rockchip connector-id=154 plane-id=73 "
         "force-modesetting=false fullscreen=true sync=false "
     )
@@ -347,9 +520,16 @@ def ensure_kms_display() -> None:
     time.sleep(0.5)
 
 
-def show_on_lvds(image: Image.Image, png_path: Path) -> None:
+def show_on_lvds(image: Image.Image, png_path: Path, display_mode: str) -> None:
+    if display_mode == "fb":
+        raw_path = png_path.with_suffix(".fb")
+        raw_path.write_bytes(image_to_xrgb8888(image))
+        run_adb(["push", str(raw_path), REMOTE_OVERLAY_RAW], capture=True)
+        run_adb(["shell", f"cat {REMOTE_OVERLAY_RAW} > /dev/fb0"], capture=True)
+        return
+
     image.save(png_path)
-    run_adb(["push", str(png_path), REMOTE_OVERLAY_PNG])
+    run_adb(["push", str(png_path), REMOTE_OVERLAY_PNG], capture=True)
     ensure_kms_display()
 
 
@@ -363,12 +543,64 @@ def write_current_product_state(label: str, confidence: float) -> None:
     CURRENT_PRODUCT_STATE.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
 
+def classify_image(
+    image: Image.Image,
+    train: list[tuple[str, np.ndarray]],
+    train_orb: list[tuple[str, np.ndarray | None]],
+) -> tuple[str, float]:
+    orb_result = classify_orb(train_orb, image)
+    return orb_result if orb_result is not None else classify(train, image_to_feature(image))
+
+
+def classifier_worker(
+    state: dict,
+    lock: threading.Lock,
+    train: list[tuple[str, np.ndarray]],
+    train_orb: list[tuple[str, np.ndarray | None]],
+    period: float,
+    classify_every: int,
+) -> None:
+    last_seen_id = 0
+    classify_every = max(1, classify_every)
+    while not CLASSIFIER_STOP.is_set():
+        with lock:
+            image = state.get("image")
+            frame_id = state.get("frame_id", 0)
+        if image is None or frame_id == last_seen_id:
+            CLASSIFIER_STOP.wait(0.05)
+            continue
+        if frame_id % classify_every != 0 and last_seen_id != 0:
+            last_seen_id = frame_id
+            CLASSIFIER_STOP.wait(0.02)
+            continue
+        last_seen_id = frame_id
+        try:
+            label, confidence = classify_image(image.copy(), train, train_orb)
+        except Exception as exc:  # keep display alive if classification trips
+            print(f"classifier warning: {exc}", flush=True)
+            CLASSIFIER_STOP.wait(period)
+            continue
+        with lock:
+            state["label"] = label
+            state["confidence"] = confidence
+            state["classified_frame_id"] = frame_id
+        write_current_product_state(label, confidence)
+        CLASSIFIER_STOP.wait(period)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Live visual product recognition with LVDS overlay.")
     parser.add_argument("--width", type=int, default=800)
     parser.add_argument("--height", type=int, default=1280)
     parser.add_argument("--interval", type=float, default=0.2)
     parser.add_argument("--rounds", type=int, default=0, help="0 means run forever")
+    parser.add_argument("--camera-width", type=int, default=800)
+    parser.add_argument("--camera-height", type=int, default=600)
+    parser.add_argument("--classify-every", type=int, default=5, help="classify every N streamed frames")
+    parser.add_argument("--classify-period", type=float, default=1.0, help="seconds between background classifications")
+    parser.add_argument("--single-shot", action="store_true", help="use old one-frame capture loop")
+    parser.add_argument("--stream-mode", choices=["pull", "exec-out"], default="pull")
+    parser.add_argument("--display-mode", choices=["preview", "fb", "kms"], default="preview")
     args = parser.parse_args()
 
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
@@ -377,21 +609,84 @@ def main() -> None:
     print(f"loaded {len(train)} training images from {len(set(label for label, _ in train))} classes")
     if train_orb:
         print("using ORB keypoint matching for live classification")
-    print("starting LVDS overlay loop; press Ctrl+C to stop")
+    mode = "single-shot capture" if args.single_shot else f"continuous camera stream ({args.stream_mode})"
+    print(f"starting LVDS overlay loop in {mode}; press Ctrl+C to stop")
 
     index = 0
-    while args.rounds == 0 or index < args.rounds:
-        index += 1
-        pgm_path = RUNTIME_DIR / "frame.pgm"
-        png_path = RUNTIME_DIR / "frame_overlay.png"
-        image = capture_frame(pgm_path)
-        orb_result = classify_orb(train_orb, image)
-        label, confidence = orb_result if orb_result is not None else classify(train, image_to_feature(image))
-        overlay = draw_overlay(image, label, confidence, (args.width, args.height))
-        write_current_product_state(label, confidence)
-        show_on_lvds(overlay, png_path)
-        print(f"{index:04d}: {label} {ZH_NAMES.get(label, label)} confidence={confidence:.3f}")
-        time.sleep(args.interval)
+    label = UNKNOWN_LABEL
+    confidence = 0.0
+    camera_proc: subprocess.Popen | None = None
+    state_lock = threading.Lock()
+    state = {
+        "image": None,
+        "frame_id": 0,
+        "label": label,
+        "confidence": confidence,
+        "classified_frame_id": 0,
+    }
+    classifier_thread: threading.Thread | None = None
+    if args.display_mode == "preview" and not args.single_shot:
+        start_board_preview_pipeline(args.camera_width, args.camera_height)
+    elif not args.single_shot and args.stream_mode == "exec-out":
+        camera_proc = start_camera_stream(args.camera_width, args.camera_height)
+    elif not args.single_shot:
+        start_remote_frame_writer(args.camera_width, args.camera_height)
+        CLASSIFIER_STOP.clear()
+        classifier_thread = threading.Thread(
+            target=classifier_worker,
+            args=(state, state_lock, train, train_orb, max(0.1, args.classify_period), max(1, args.classify_every)),
+            daemon=True,
+        )
+        classifier_thread.start()
+
+    try:
+        while args.rounds == 0 or index < args.rounds:
+            index += 1
+            pgm_path = RUNTIME_DIR / "frame.pgm"
+            png_path = RUNTIME_DIR / "frame_overlay.png"
+            if args.single_shot:
+                image = capture_frame(pgm_path)
+                label, confidence = classify_image(image, train, train_orb)
+                write_current_product_state(label, confidence)
+            elif args.display_mode == "preview":
+                if KMS_PROCESS is None or KMS_PROCESS.poll() is not None:
+                    start_board_preview_pipeline(args.camera_width, args.camera_height)
+                image = pull_latest_preview_frame(RUNTIME_DIR / "preview.jpg")
+                label, confidence = classify_image(image, train, train_orb)
+                write_current_product_state(label, confidence)
+            elif args.stream_mode == "pull":
+                if CAMERA_PROCESS is None or CAMERA_PROCESS.poll() is not None:
+                    start_remote_frame_writer(args.camera_width, args.camera_height)
+                image = pull_latest_remote_frame(pgm_path)
+                with state_lock:
+                    state["image"] = image.copy()
+                    state["frame_id"] = index
+                    label = state.get("label", UNKNOWN_LABEL)
+                    confidence = state.get("confidence", 0.0)
+            else:
+                if camera_proc is None or camera_proc.stdout is None or camera_proc.poll() is not None:
+                    camera_proc = start_camera_stream(args.camera_width, args.camera_height)
+                image = read_pgm_frame_from_stream(camera_proc.stdout)
+                if index == 1 or index % max(1, args.classify_every) == 0:
+                    label, confidence = classify_image(image, train, train_orb)
+                    write_current_product_state(label, confidence)
+
+            if args.display_mode != "preview":
+                overlay = draw_overlay(image, label, confidence, (args.width, args.height))
+                show_on_lvds(overlay, png_path, args.display_mode)
+            print(f"{index:04d}: {label} {ZH_NAMES.get(label, label)} confidence={confidence:.3f}", flush=True)
+            if args.display_mode == "preview":
+                time.sleep(max(0.1, args.classify_period))
+            elif args.single_shot and args.interval > 0:
+                time.sleep(args.interval)
+    finally:
+        CLASSIFIER_STOP.set()
+        if classifier_thread is not None:
+            classifier_thread.join(timeout=1.0)
+        if args.display_mode == "preview":
+            run_adb(["shell", "pkill -9 gst-launch-1.0 2>/dev/null || true"], check=False)
+        if CAMERA_PROCESS is not None and CAMERA_PROCESS.poll() is None:
+            CAMERA_PROCESS.terminate()
 
 
 if __name__ == "__main__":

@@ -1,6 +1,11 @@
 param(
     [int]$Rounds = 0,
     [double]$Interval = 0.5,
+    [int]$ClassifyEvery = 5,
+    [double]$ClassifyPeriod = 1.0,
+    [ValidateSet("preview", "fb", "kms")]
+    [string]$DisplayMode = "preview",
+    [switch]$SingleShot,
     [switch]$SkipChecks
 )
 
@@ -92,5 +97,25 @@ if ($Rounds -eq 0) {
     Write-Host "Mode: $Rounds rounds." -ForegroundColor Yellow
 }
 Write-Host "Interval: $Interval seconds"
+Write-Host "Classify every: $ClassifyEvery frame(s)"
+Write-Host "Classify period: $ClassifyPeriod seconds"
+Write-Host "Display mode: $DisplayMode"
+if ($SingleShot) {
+    Write-Host "Capture mode: single-shot fallback" -ForegroundColor Yellow
+} else {
+    Write-Host "Capture mode: continuous camera stream" -ForegroundColor Green
+}
 
-& $Python $DemoScript --rounds $Rounds --interval $Interval
+$DemoArgs = @(
+    $DemoScript,
+    "--rounds", "$Rounds",
+    "--interval", "$Interval",
+    "--classify-every", "$ClassifyEvery",
+    "--classify-period", "$ClassifyPeriod",
+    "--display-mode", "$DisplayMode"
+)
+if ($SingleShot) {
+    $DemoArgs += "--single-shot"
+}
+
+& $Python @DemoArgs
