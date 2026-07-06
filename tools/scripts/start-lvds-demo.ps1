@@ -51,8 +51,12 @@ if (Test-Path (Join-Path $projectRoot "data\products.csv")) {
     & $adb push (Join-Path $projectRoot "data\products.csv") "/userdata/Embed_project/data/products.csv" | Out-Host
 }
 
-if (Test-Path (Join-Path $projectRoot "build_arm\qr_scanner_display")) {
-    & $adb push (Join-Path $projectRoot "build_arm\qr_scanner_display") "/userdata/Embed_project/bin/qr_scanner_display" | Out-Host
+$qrScannerDisplay = Join-Path $projectRoot "build_arm\qr_scanner_display"
+if (!(Test-Path $qrScannerDisplay)) {
+    $qrScannerDisplay = Join-Path $projectRoot "patched\qr_scanner_display"
+}
+if (Test-Path $qrScannerDisplay) {
+    & $adb push $qrScannerDisplay "/userdata/Embed_project/bin/qr_scanner_display" | Out-Host
 }
 
 & $adb shell "chmod +x /userdata/Embed_project/scripts/*.sh /userdata/Embed_project/bin/* 2>/dev/null || true" | Out-Host

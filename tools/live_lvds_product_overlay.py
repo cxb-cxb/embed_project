@@ -23,12 +23,15 @@ RUNTIME_DIR = Path("D:/qsm_embed_dataset/lvds_overlay_runtime")
 CURRENT_PRODUCT_STATE = RUNTIME_DIR / "current_product.json"
 VOICE_REPLY_STATE = RUNTIME_DIR / "voice_reply.json"
 REMOTE_OVERLAY_PNG = "/tmp/live_product_overlay_00000.png"
+REMOTE_OVERLAY_PNG_ALT = "/tmp/live_product_overlay_00001.png"
+REMOTE_OVERLAY_PATTERN = "/tmp/live_product_overlay_%05d.png"
 REMOTE_OVERLAY_RAW = "/tmp/live_product_overlay.fb"
 REMOTE_STREAM_PGM = "/tmp/live_product_overlay_stream.pgm"
 REMOTE_PREVIEW_PATTERN = "/tmp/live_product_preview_%05d.jpg"
 KMS_PROCESS: subprocess.Popen | None = None
 CAMERA_PROCESS: subprocess.Popen | None = None
 CLASSIFIER_STOP = threading.Event()
+OVERLAY_SLOT = 0
 ADB = (
     Path.home()
     / "AppData/Local/Microsoft/WinGet/Packages/"
@@ -509,7 +512,7 @@ def ensure_kms_display(*, restart: bool = False) -> None:
 
     command = (
         "exec gst-launch-1.0 -q "
-        f"multifilesrc location={REMOTE_OVERLAY_PNG} index=0 "
+        f"multifilesrc location={REMOTE_OVERLAY_PATTERN} start-index=0 stop-index=1 loop=true "
         "caps='image/png,framerate=15/1' ! "
         "pngdec ! videoconvert ! "
         "video/x-raw,format=BGRx,width=800,height=1280,framerate=15/1 ! "
@@ -526,15 +529,18 @@ def ensure_kms_display(*, restart: bool = False) -> None:
 
 
 def show_on_lvds(image: Image.Image, png_path: Path, display_mode: str) -> None:
-    if display_mode == "fb":
-        image.save(png_path)
+    global OVERLAY_SLOT
+    image.save(png_path)
+    if KMS_PROCESS is None or KMS_PROCESS.poll() is not None:
         run_adb(["push", str(png_path), REMOTE_OVERLAY_PNG], capture=True)
+        run_adb(["push", str(png_path), REMOTE_OVERLAY_PNG_ALT], capture=True)
         ensure_kms_display(restart=True)
+        OVERLAY_SLOT = 1
         return
 
-    image.save(png_path)
-    run_adb(["push", str(png_path), REMOTE_OVERLAY_PNG], capture=True)
-    ensure_kms_display(restart=True)
+    remote = REMOTE_OVERLAY_PNG_ALT if OVERLAY_SLOT else REMOTE_OVERLAY_PNG
+    run_adb(["push", str(png_path), remote], capture=True)
+    OVERLAY_SLOT = 1 - OVERLAY_SLOT
 
 
 def write_current_product_state(label: str, confidence: float) -> None:
