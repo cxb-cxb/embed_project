@@ -6,6 +6,7 @@ $ErrorActionPreference = "Stop"
 
 $projectRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 $bundledAdb = Join-Path $projectRoot "tools\adb\adb.exe"
+$stopLvdsDemo = Join-Path $projectRoot "tools\scripts\stop-lvds-demo.ps1"
 
 function Resolve-Adb {
     if (Test-Path $bundledAdb) {
@@ -73,5 +74,10 @@ if ($Background) {
     & $adb shell "pgrep -af qr_scanner_display; echo --- log ---; tail -40 /tmp/qsm_lvds_demo.log 2>/dev/null || true" | Out-Host
 } else {
     Write-Host "[demo] starting foreground demo. Press Ctrl+C to stop."
-    & $adb shell "pkill -9 gst-launch-1.0 2>/dev/null || true; pkill -9 camera_pgm_stream 2>/dev/null || true; pkill -9 weston-desktop-shell 2>/dev/null || true; pkill -9 weston-keyboard 2>/dev/null || true; pkill -9 weston 2>/dev/null || true; rm -f /tmp/qsm_lvds_demo.log; cd /userdata/Embed_project && sh scripts/demo_lvds_start.sh 2>&1 | tee /tmp/qsm_lvds_demo.log"
+    try {
+        & $adb shell "pkill -9 gst-launch-1.0 2>/dev/null || true; pkill -9 camera_pgm_stream 2>/dev/null || true; pkill -9 weston-desktop-shell 2>/dev/null || true; pkill -9 weston-keyboard 2>/dev/null || true; pkill -9 weston 2>/dev/null || true; rm -f /tmp/qsm_lvds_demo.log; cd /userdata/Embed_project && sh scripts/demo_lvds_start.sh 2>&1 | tee /tmp/qsm_lvds_demo.log"
+    } finally {
+        Write-Host "[demo] LVDS demo exited; restoring desktop."
+        & powershell -NoProfile -ExecutionPolicy Bypass -File $stopLvdsDemo
+    }
 }

@@ -27,6 +27,7 @@ Write-Host ""
 
 $visual = Join-Path $ProjectRoot "start_visual_lvds_demo.ps1"
 $qrLvds = Join-Path $ProjectRoot "tools\scripts\start-lvds-demo.ps1"
+$stopLvds = Join-Path $ProjectRoot "tools\scripts\stop-lvds-demo.ps1"
 $voice = Join-Path $ProjectRoot "start_voice_mic_query_loop.ps1"
 
 function New-EncodedPowerShellCommand {
@@ -52,6 +53,10 @@ try {
 } catch {
     Write-Host ''
     Write-Host "LVDS QR CART ERROR: `$(`$_.Exception.Message)" -ForegroundColor Red
+} finally {
+    Write-Host ''
+    Write-Host 'Stopping LVDS QR cart and restoring desktop...' -ForegroundColor Yellow
+    & '$stopLvds'
 }
 Write-Host ''
 Write-Host 'LVDS QR cart window ended. Press Enter to close.'
