@@ -36,7 +36,10 @@ ADB = (
 )
 
 CAMERA_CLEANUP_CMD = (
-    "for p in $(ps | grep '[l]ive_product_overlay_stream' | awk '{print $1}'); do "
+    "for p in $(ps -ef | grep '[l]ive_product_overlay_stream' | awk '{print $2}'); do "
+    "[ \"$p\" = \"$$\" ] || kill -9 \"$p\" 2>/dev/null || true; "
+    "done; "
+    "for p in $(ps -ef | grep '[c]amera_pgm_stream' | awk '{print $2}'); do "
     "[ \"$p\" = \"$$\" ] || kill -9 \"$p\" 2>/dev/null || true; "
     "done; "
     "pkill -9 qr_scanner_display 2>/dev/null || true; "
@@ -684,7 +687,7 @@ def main() -> None:
         if classifier_thread is not None:
             classifier_thread.join(timeout=1.0)
         if args.display_mode == "preview":
-            run_adb(["shell", "pkill -9 gst-launch-1.0 2>/dev/null || true"], check=False)
+            run_adb(["shell", CAMERA_CLEANUP_CMD], check=False)
         if CAMERA_PROCESS is not None and CAMERA_PROCESS.poll() is None:
             CAMERA_PROCESS.terminate()
 
