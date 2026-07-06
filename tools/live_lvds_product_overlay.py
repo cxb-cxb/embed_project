@@ -499,15 +499,17 @@ def image_to_xrgb8888(image: Image.Image) -> bytes:
     return bgra.tobytes()
 
 
-def ensure_kms_display() -> None:
+def ensure_kms_display(*, restart: bool = False) -> None:
     global KMS_PROCESS
-    if KMS_PROCESS is not None and KMS_PROCESS.poll() is None:
+    if restart:
+        run_adb(["shell", "pkill -9 gst-launch-1.0 2>/dev/null || true"], check=False)
+        KMS_PROCESS = None
+    elif KMS_PROCESS is not None and KMS_PROCESS.poll() is None:
         return
 
     command = (
-        "pkill -9 gst-launch-1.0 2>/dev/null || true; "
         "exec gst-launch-1.0 -q "
-        "multifilesrc location=/tmp/live_product_overlay_%05d.png start-index=0 stop-index=0 loop=true "
+        f"multifilesrc location={REMOTE_OVERLAY_PNG} index=0 "
         "caps='image/png,framerate=15/1' ! "
         "pngdec ! videoconvert ! "
         "video/x-raw,format=BGRx,width=800,height=1280,framerate=15/1 ! "
@@ -525,15 +527,14 @@ def ensure_kms_display() -> None:
 
 def show_on_lvds(image: Image.Image, png_path: Path, display_mode: str) -> None:
     if display_mode == "fb":
-        raw_path = png_path.with_suffix(".fb")
-        raw_path.write_bytes(image_to_xrgb8888(image))
-        run_adb(["push", str(raw_path), REMOTE_OVERLAY_RAW], capture=True)
-        run_adb(["shell", f"cat {REMOTE_OVERLAY_RAW} > /dev/fb0"], capture=True)
+        image.save(png_path)
+        run_adb(["push", str(png_path), REMOTE_OVERLAY_PNG], capture=True)
+        ensure_kms_display(restart=True)
         return
 
     image.save(png_path)
     run_adb(["push", str(png_path), REMOTE_OVERLAY_PNG], capture=True)
-    ensure_kms_display()
+    ensure_kms_display(restart=True)
 
 
 def write_current_product_state(label: str, confidence: float) -> None:
