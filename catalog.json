@@ -1,0 +1,62 @@
+{
+  "cola": {
+    "name": "Cola",
+    "name_zh": "可乐",
+    "price": 3.5,
+    "qr": "product:cola"
+  },
+  "noodle": {
+    "name": "Instant Noodle",
+    "name_zh": "方便面",
+    "price": 4.0,
+    "qr": "product:noodle"
+  },
+  "chips": {
+    "name": "Chips",
+    "name_zh": "薯片",
+    "price": 6.0,
+    "qr": "product:chips"
+  },
+  "biscuit": {
+    "name": "Biscuit",
+    "name_zh": "饼干",
+    "price": 5.5,
+    "qr": "product:biscuit"
+  },
+  "milk": {
+    "name": "Milk",
+    "name_zh": "牛奶",
+    "price": 4.5,
+    "qr": "product:milk"
+  },
+  "bread": {
+    "name": "Bread",
+    "name_zh": "面包",
+    "price": 5.0,
+    "qr": "product:bread"
+  },
+  "toothpaste": {
+    "name": "Toothpaste",
+    "name_zh": "牙膏",
+    "price": 8.0,
+    "qr": "product:toothpaste"
+  },
+  "water": {
+    "name": "Water",
+    "name_zh": "矿泉水",
+    "price": 2.0,
+    "qr": "product:water"
+  },
+  "tissue": {
+    "name": "Tissue",
+    "name_zh": "纸巾",
+    "price": 4.0,
+    "qr": "product:tissue"
+  },
+  "soap": {
+    "name": "Soap",
+    "name_zh": "肥皂",
+    "price": 3.0,
+    "qr": "product:soap"
+  }
+}

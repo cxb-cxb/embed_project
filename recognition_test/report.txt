@@ -1,0 +1,29 @@
+classes: biscuit, bread, chips, cola, milk, noodle, soap, tissue, toothpaste, water
+accuracy: 100/100 = 100.00%
+
+samples:
+  biscuit: train=20, test=10
+  bread: train=20, test=10
+  chips: train=20, test=10
+  cola: train=20, test=10
+  milk: train=20, test=10
+  noodle: train=20, test=10
+  soap: train=20, test=10
+  tissue: train=20, test=10
+  toothpaste: train=20, test=10
+  water: train=20, test=10
+
+confusion:
+  biscuit: biscuit=10
+  bread: bread=10
+  chips: chips=10
+  cola: cola=10
+  milk: milk=10
+  noodle: noodle=10
+  soap: soap=10
+  tissue: tissue=10
+  toothpaste: toothpaste=10
+  water: water=10
+
+mistakes:
+  none
