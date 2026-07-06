@@ -18,39 +18,56 @@ Write-Host ""
 
 $visual = Join-Path $ProjectRoot "start_visual_lvds_demo.ps1"
 $voice = Join-Path $ProjectRoot "start_voice_mic_query_loop.ps1"
-$runtimeDir = "D:\qsm_embed_dataset\lvds_overlay_runtime"
-New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
 
-$visualLauncher = Join-Path $runtimeDir "start_visual_final_window.cmd"
-$voiceLauncher = Join-Path $runtimeDir "start_voice_final_window.cmd"
+function New-EncodedPowerShellCommand {
+    param([string]$Command)
+    $bytes = [System.Text.Encoding]::Unicode.GetBytes($Command)
+    return [Convert]::ToBase64String($bytes)
+}
 
-@"
-@echo off
-chcp 65001 >nul
-cd /d "$ProjectRoot"
-echo Starting visual recognition + LVDS overlay...
-powershell -NoProfile -ExecutionPolicy Bypass -NoExit -File "$visual"
-echo.
-echo Visual window ended. Press any key to close.
-pause >nul
-"@ | Set-Content -Path $visualLauncher -Encoding ASCII
+$visualCommand = @"
+Set-Location -LiteralPath '$ProjectRoot'
+Write-Host 'Starting visual recognition + LVDS overlay...' -ForegroundColor Cyan
+try {
+    & '$visual'
+} catch {
+    Write-Host ''
+    Write-Host "VISUAL ERROR: `$(`$_.Exception.Message)" -ForegroundColor Red
+}
+Write-Host ''
+Write-Host 'Visual window ended. Press Enter to close.'
+Read-Host
+"@
 
-@"
-@echo off
-chcp 65001 >nul
-cd /d "$ProjectRoot"
-echo Starting board microphone + ASR + smart reply...
-powershell -NoProfile -ExecutionPolicy Bypass -NoExit -File "$voice" -Seconds $VoiceSeconds -ReplyMode $ReplyMode
-echo.
-echo Voice window ended. Press any key to close.
-pause >nul
-"@ | Set-Content -Path $voiceLauncher -Encoding ASCII
+$voiceCommand = @"
+Set-Location -LiteralPath '$ProjectRoot'
+Write-Host 'Starting board microphone + ASR + smart reply...' -ForegroundColor Cyan
+try {
+    & '$voice' -Seconds $VoiceSeconds -ReplyMode '$ReplyMode'
+} catch {
+    Write-Host ''
+    Write-Host "VOICE ERROR: `$(`$_.Exception.Message)" -ForegroundColor Red
+}
+Write-Host ''
+Write-Host 'Voice window ended. Press Enter to close.'
+Read-Host
+"@
 
-Start-Process -FilePath "cmd.exe" -ArgumentList @("/k", "`"$visualLauncher`"") -WorkingDirectory $ProjectRoot
+Start-Process -FilePath "powershell.exe" -ArgumentList @(
+    "-NoProfile",
+    "-ExecutionPolicy", "Bypass",
+    "-NoExit",
+    "-EncodedCommand", (New-EncodedPowerShellCommand $visualCommand)
+) -WorkingDirectory $ProjectRoot
 
 Start-Sleep -Seconds 2
 
-Start-Process -FilePath "cmd.exe" -ArgumentList @("/k", "`"$voiceLauncher`"") -WorkingDirectory $ProjectRoot
+Start-Process -FilePath "powershell.exe" -ArgumentList @(
+    "-NoProfile",
+    "-ExecutionPolicy", "Bypass",
+    "-NoExit",
+    "-EncodedCommand", (New-EncodedPowerShellCommand $voiceCommand)
+) -WorkingDirectory $ProjectRoot
 
 Write-Host "Demo windows started." -ForegroundColor Green
 Write-Host "In the voice window, press Enter and ask the price question."
