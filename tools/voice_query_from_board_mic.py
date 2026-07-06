@@ -13,6 +13,7 @@ import sys
 import time
 import uuid
 import wave
+import audioop
 from pathlib import Path
 
 from voice_retail_assistant import answer_question, load_catalog
@@ -59,13 +60,13 @@ def run(cmd: list[str], *, check: bool = True) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, text=True, encoding="utf-8", errors="replace", check=check)
 
 
-def record_from_board(adb: str, seconds: int, output_dir: Path) -> Path:
+def record_from_board(adb: str, seconds: int, output_dir: Path, mic_path: str) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d_%H%M%S")
     remote_wav = f"/tmp/qsm_voice_query_{stamp}.wav"
     local_wav = output_dir / f"qsm_voice_query_{stamp}.wav"
     shell_cmd = (
-        "amixer -c 0 cset name='Capture MIC Path' 'Main Mic' >/dev/null; "
+        f"amixer -c 0 cset name='Capture MIC Path' '{mic_path}' >/dev/null; "
         f"arecord -D hw:0,0 -f S16_LE -c 2 -r 16000 -d {seconds} '{remote_wav}'"
     )
     print(f"请对着板载麦克风说话，录音 {seconds} 秒...")
@@ -73,6 +74,18 @@ def record_from_board(adb: str, seconds: int, output_dir: Path) -> Path:
     run([adb, "pull", remote_wav, str(local_wav)])
     print(f"录音文件: {local_wav}")
     return local_wav
+
+
+def wav_level(path: Path) -> tuple[int, int, float]:
+    with wave.open(str(path), "rb") as wav:
+        frames = wav.getnframes()
+        rate = wav.getframerate() or 1
+        width = wav.getsampwidth()
+        data = wav.readframes(frames)
+    duration = frames / float(rate)
+    if not data:
+        return 0, 0, duration
+    return audioop.rms(data, width), audioop.max(data, width), duration
 
 
 def transcribe_with_openai(wav_path: Path, model: str, language: str | None) -> str:
@@ -176,6 +189,8 @@ def transcribe_with_volcengine(wav_path: Path, language: str | None) -> str:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Board microphone -> PC ASR -> retail answer")
     parser.add_argument("--seconds", type=int, default=5, help="recording duration")
+    parser.add_argument("--mic-path", choices=["Main Mic", "Hands Free Mic"], default="Main Mic")
+    parser.add_argument("--min-rms", type=int, default=35, help="minimum recording RMS before calling ASR")
     parser.add_argument("--catalog", default=str(DEFAULT_CATALOG))
     parser.add_argument("--current-product", default=None)
     parser.add_argument("--visual-state", default=str(DEFAULT_VISUAL_STATE))
@@ -482,7 +497,15 @@ def main() -> int:
     else:
         if adb is None:
             adb = find_adb()
-        wav_path = record_from_board(adb, args.seconds, Path(args.keep_audio_dir))
+        wav_path = record_from_board(adb, args.seconds, Path(args.keep_audio_dir), args.mic_path)
+        rms, peak, duration = wav_level(wav_path)
+        print(f"[record_level rms={rms} peak={peak} duration={duration:.1f}s mic='{args.mic_path}']")
+        if rms < args.min_rms:
+            print(
+                "录音音量太低，ASR 会判断为静音。请靠近麦克风，"
+                "或尝试 --mic-path 'Hands Free Mic'。"
+            )
+            return 4
         try:
             if args.asr_provider == "volcengine":
                 question = transcribe_with_volcengine(wav_path, args.language).strip()

@@ -4,6 +4,9 @@ param(
     [string]$ReplyMode = "auto",
     [ValidateSet("terminal", "wav", "board")]
     [string]$VoiceOutput = "terminal",
+    [ValidateSet("Main Mic", "Hands Free Mic")]
+    [string]$MicPath = "Main Mic",
+    [int]$MinRms = 35,
     [ValidateSet("qr-cart", "visual-preview", "visual-overlay")]
     [string]$LvdsMode = "qr-cart"
 )
@@ -39,7 +42,13 @@ Set-Location -LiteralPath '$ProjectRoot'
 Write-Host 'Starting QR cart + LVDS realtime display...' -ForegroundColor Cyan
 Write-Host 'Scan product QR codes to add items. Scan checkout or clear for cart actions.' -ForegroundColor Yellow
 try {
-    & '$qrLvds'
+    & '$qrLvds' -Background
+    Write-Host ''
+    Write-Host 'QR cart is running on the board. This window monitors the log.' -ForegroundColor Green
+    while (`$true) {
+        Start-Sleep -Seconds 5
+        & '$ProjectRoot\tools\adb\adb.exe' shell "pgrep -af qr_scanner_display >/dev/null && echo '[QR] running' || echo '[QR] not running'; tail -8 /tmp/qsm_lvds_demo.log 2>/dev/null || true"
+    }
 } catch {
     Write-Host ''
     Write-Host "LVDS QR CART ERROR: `$(`$_.Exception.Message)" -ForegroundColor Red
@@ -85,7 +94,7 @@ $voiceCommand = @"
 Set-Location -LiteralPath '$ProjectRoot'
 Write-Host 'Starting board microphone + ASR + smart reply...' -ForegroundColor Cyan
 try {
-    & '$voice' -Seconds $VoiceSeconds -ReplyMode '$ReplyMode' -VoiceOutput '$VoiceOutput'
+    & '$voice' -Seconds $VoiceSeconds -ReplyMode '$ReplyMode' -VoiceOutput '$VoiceOutput' -MicPath '$MicPath' -MinRms $MinRms
 } catch {
     Write-Host ''
     Write-Host "VOICE ERROR: `$(`$_.Exception.Message)" -ForegroundColor Red

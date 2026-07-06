@@ -32,6 +32,9 @@ pkill -9 gst-launch-1.0 2>/dev/null || true
 pkill -9 camera_pgm_stream 2>/dev/null || true
 pkill -9 qr_scanner 2>/dev/null || true
 pkill -9 qr_scanner_display 2>/dev/null || true
+pkill -9 weston-desktop-shell 2>/dev/null || true
+pkill -9 weston-keyboard 2>/dev/null || true
+pkill -9 weston 2>/dev/null || true
 sleep 1
 
 if ! pgrep rkaiq_3A_server >/dev/null 2>&1; then

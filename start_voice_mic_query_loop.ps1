@@ -4,7 +4,10 @@ param(
     [string]$ReplyMode = "offline",
     [string]$CurrentProduct = "",
     [ValidateSet("terminal", "wav", "board")]
-    [string]$VoiceOutput = "terminal"
+    [string]$VoiceOutput = "terminal",
+    [ValidateSet("Main Mic", "Hands Free Mic")]
+    [string]$MicPath = "Main Mic",
+    [int]$MinRms = 35
 )
 
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -14,4 +17,6 @@ $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
     -ReplyMode $ReplyMode `
     -CurrentProduct $CurrentProduct `
     -VoiceOutput $VoiceOutput `
+    -MicPath $MicPath `
+    -MinRms $MinRms `
     -Loop

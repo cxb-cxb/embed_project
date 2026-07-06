@@ -8,6 +8,9 @@ param(
     [string]$AsrText = "",
     [ValidateSet("terminal", "wav", "board")]
     [string]$VoiceOutput = "terminal",
+    [ValidateSet("Main Mic", "Hands Free Mic")]
+    [string]$MicPath = "Main Mic",
+    [int]$MinRms = 35,
     [switch]$Loop
 )
 
@@ -44,7 +47,9 @@ $ArgsList = @(
     "--seconds", "$Seconds",
     "--reply-mode", $ReplyMode,
     "--asr-provider", $AsrProvider,
-    "--voice-output", $VoiceOutput
+    "--voice-output", $VoiceOutput,
+    "--mic-path", $MicPath,
+    "--min-rms", "$MinRms"
 )
 if ($CurrentProduct.Trim()) {
     $ArgsList += @("--current-product", $CurrentProduct.Trim())
