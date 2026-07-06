@@ -1,0 +1,102 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "WSL: install build tools",
+      "type": "shell",
+      "command": "sudo apt update && sudo apt install -y build-essential cmake make gcc-aarch64-linux-gnu g++-aarch64-linux-gnu",
+      "problemMatcher": []
+    },
+    {
+      "label": "Build: native debug",
+      "type": "shell",
+      "command": "cmake -S . -B build && cmake --build build",
+      "group": "build",
+      "problemMatcher": "$gcc"
+    },
+    {
+      "label": "Test: native",
+      "type": "shell",
+      "command": "cd build && ctest -V",
+      "dependsOn": "Build: native debug",
+      "problemMatcher": []
+    },
+    {
+      "label": "Build: ARM smart retail",
+      "type": "shell",
+      "command": "mkdir -p build_arm && aarch64-linux-gnu-g++ -std=c++17 -Iinclude src/catalog.cpp src/cart.cpp src/payment.cpp src/recognizer.cpp src/voice.cpp src/main.cpp -o build_arm/embed_project && file build_arm/embed_project",
+      "problemMatcher": "$gcc"
+    },
+    {
+      "label": "Build: ARM QR scanner",
+      "type": "shell",
+      "command": "mkdir -p build_arm && aarch64-linux-gnu-gcc -std=c11 -O2 -Wall -Iinclude -Ilib/quirc src/qr_scanner.c lib/quirc/quirc.c lib/quirc/decode.c lib/quirc/identify.c lib/quirc/version_db.c -o build_arm/qr_scanner -lm && file build_arm/qr_scanner",
+      "problemMatcher": "$gcc"
+    },
+    {
+      "label": "Build: ARM QR scanner display",
+      "type": "shell",
+      "command": "mkdir -p build_arm && aarch64-linux-gnu-gcc -std=c11 -O2 -Wall -Iinclude -Ilib/quirc src/qr_scanner_display.c lib/quirc/quirc.c lib/quirc/decode.c lib/quirc/identify.c lib/quirc/version_db.c -o build_arm/qr_scanner_display -lm && file build_arm/qr_scanner_display",
+      "problemMatcher": "$gcc"
+    },
+    {
+      "label": "ADB: push project",
+      "type": "shell",
+      "command": "ADB=${ADB:-/mnt/c/tmp/RKDevTool_Release_v2.92/RKDevTool_Release_v2.92/bin/adb.exe}; \"$ADB\" devices && \"$ADB\" shell 'mkdir -p /userdata/Embed_project/bin /userdata/Embed_project/data /userdata/Embed_project/scripts' && \"$ADB\" push build_arm/embed_project /userdata/Embed_project/bin/embed_project && \"$ADB\" push build_arm/qr_scanner /userdata/Embed_project/bin/qr_scanner && \"$ADB\" push build_arm/qr_scanner_display /userdata/Embed_project/bin/qr_scanner_display && \"$ADB\" push data/products.csv /userdata/Embed_project/data/products.csv && \"$ADB\" push scripts/camera_preview_lvds.sh /userdata/Embed_project/scripts/camera_preview_lvds.sh && \"$ADB\" push scripts/qr_realtime_terminal.sh /userdata/Embed_project/scripts/qr_realtime_terminal.sh && \"$ADB\" push scripts/qr_realtime_lvds.sh /userdata/Embed_project/scripts/qr_realtime_lvds.sh && \"$ADB\" shell 'chmod +x /userdata/Embed_project/bin/embed_project /userdata/Embed_project/bin/qr_scanner /userdata/Embed_project/bin/qr_scanner_display /userdata/Embed_project/scripts/*.sh'",
+      "dependsOn": [
+        "Build: ARM smart retail",
+        "Build: ARM QR scanner",
+        "Build: ARM QR scanner display"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "ADB: run smart retail",
+      "type": "shell",
+      "command": "ADB=${ADB:-/mnt/c/tmp/RKDevTool_Release_v2.92/RKDevTool_Release_v2.92/bin/adb.exe}; \"$ADB\" shell '/userdata/Embed_project/bin/embed_project /userdata/Embed_project/data/products.csv'",
+      "problemMatcher": []
+    },
+    {
+      "label": "ADB: run QR terminal preview",
+      "type": "shell",
+      "command": "ADB=${ADB:-/mnt/c/tmp/RKDevTool_Release_v2.92/RKDevTool_Release_v2.92/bin/adb.exe}; \"$ADB\" shell 'sh /userdata/Embed_project/scripts/qr_realtime_terminal.sh'",
+      "problemMatcher": []
+    },
+    {
+      "label": "ADB: run camera LVDS preview",
+      "type": "shell",
+      "command": "ADB=${ADB:-/mnt/c/tmp/RKDevTool_Release_v2.92/RKDevTool_Release_v2.92/bin/adb.exe}; \"$ADB\" shell 'sh /userdata/Embed_project/scripts/camera_preview_lvds.sh'",
+      "problemMatcher": []
+    },
+    {
+      "label": "ADB: stop camera tasks",
+      "type": "shell",
+      "command": "ADB=${ADB:-/mnt/c/tmp/RKDevTool_Release_v2.92/RKDevTool_Release_v2.92/bin/adb.exe}; \"$ADB\" shell 'pkill -9 gst-launch-1.0 2>/dev/null || true; pkill -9 qr_scanner 2>/dev/null || true; pkill -9 qr_scanner_display 2>/dev/null || true'",
+      "problemMatcher": []
+    },
+    {
+      "label": "Demo: start LVDS QR retail",
+      "type": "shell",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File tools/scripts/start-lvds-demo.ps1",
+      "problemMatcher": []
+    },
+    {
+      "label": "Demo: start LVDS QR retail background",
+      "type": "shell",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File tools/scripts/start-lvds-demo.ps1 -Background",
+      "problemMatcher": []
+    },
+    {
+      "label": "Demo: stop LVDS QR retail",
+      "type": "shell",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File tools/scripts/stop-lvds-demo.ps1",
+      "problemMatcher": []
+    },
+    {
+      "label": "Demo: generate QR package",
+      "type": "shell",
+      "command": "python tools/generate_demo_qr.py",
+      "problemMatcher": []
+    }
+  ]
+}
