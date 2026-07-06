@@ -51,7 +51,10 @@ if (Test-Path (Join-Path $projectRoot "data\products.csv")) {
     & $adb push (Join-Path $projectRoot "data\products.csv") "/userdata/Embed_project/data/products.csv" | Out-Host
 }
 
-$qrScannerDisplay = Join-Path $projectRoot "build_arm\qr_scanner_display"
+$qrScannerDisplay = Join-Path $projectRoot "build_arm\qr_scanner_display.static"
+if (!(Test-Path $qrScannerDisplay)) {
+    $qrScannerDisplay = Join-Path $projectRoot "build_arm\qr_scanner_display"
+}
 if (!(Test-Path $qrScannerDisplay)) {
     $qrScannerDisplay = Join-Path $projectRoot "patched\qr_scanner_display"
 }
