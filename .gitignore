@@ -16,6 +16,12 @@ Testing/
 .DS_Store
 Thumbs.db
 
+__pycache__/
+*.py[cod]
+.voice_env
+voice_samples/
+*.wav
+
 !tools/adb/adb.exe
 !tools/adb/AdbWinApi.dll
 !tools/adb/AdbWinUsbApi.dll
