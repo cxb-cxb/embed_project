@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import time
 from collections import Counter
@@ -18,6 +19,7 @@ except ImportError:  # pragma: no cover - fallback for minimal Python envs
 BASE_DIR = Path(__file__).resolve().parents[1]
 DATASET_DIR = BASE_DIR / "dataset" / "product_images"
 RUNTIME_DIR = Path("D:/qsm_embed_dataset/lvds_overlay_runtime")
+CURRENT_PRODUCT_STATE = RUNTIME_DIR / "current_product.json"
 REMOTE_OVERLAY_PNG = "/tmp/live_product_overlay_00000.png"
 KMS_PROCESS: subprocess.Popen | None = None
 ADB = (
@@ -291,6 +293,16 @@ def show_on_lvds(image: Image.Image, png_path: Path) -> None:
     ensure_kms_display()
 
 
+def write_current_product_state(label: str, confidence: float) -> None:
+    payload = {
+        "label": label,
+        "name_zh": ZH_NAMES.get(label, label),
+        "confidence": round(float(confidence), 3),
+        "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    CURRENT_PRODUCT_STATE.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Live visual product recognition with LVDS overlay.")
     parser.add_argument("--width", type=int, default=800)
@@ -316,6 +328,7 @@ def main() -> None:
         orb_result = classify_orb(train_orb, image)
         label, confidence = orb_result if orb_result is not None else classify(train, image_to_feature(image))
         overlay = draw_overlay(image, label, confidence, (args.width, args.height))
+        write_current_product_state(label, confidence)
         show_on_lvds(overlay, png_path)
         print(f"{index:04d}: {label} {ZH_NAMES.get(label, label)} confidence={confidence:.3f}")
         time.sleep(args.interval)

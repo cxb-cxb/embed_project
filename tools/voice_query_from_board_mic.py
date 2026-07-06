@@ -19,6 +19,7 @@ from voice_retail_assistant import answer_question, load_catalog
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CATALOG = PROJECT_ROOT / "catalog.json"
 DEFAULT_OUTPUT_DIR = Path(r"D:\qsm_embed_dataset\voice_samples")
+DEFAULT_VISUAL_STATE = Path(r"D:\qsm_embed_dataset\lvds_overlay_runtime\current_product.json")
 VOLCENGINE_ASR_ENDPOINT = os.environ.get(
     "VOLCENGINE_ASR_ENDPOINT",
     "https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash",
@@ -169,6 +170,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seconds", type=int, default=5, help="recording duration")
     parser.add_argument("--catalog", default=str(DEFAULT_CATALOG))
     parser.add_argument("--current-product", default=None)
+    parser.add_argument("--visual-state", default=str(DEFAULT_VISUAL_STATE))
+    parser.add_argument("--ignore-visual-state", action="store_true")
     parser.add_argument("--reply-mode", choices=["offline", "auto", "llm"], default="offline")
     parser.add_argument("--asr-provider", choices=["volcengine", "openai"], default="volcengine")
     parser.add_argument("--asr-model", default=os.environ.get("RETAIL_ASR_MODEL", "whisper-1"))
@@ -178,10 +181,26 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def read_current_product_from_visual_state(path: Path, catalog: dict[str, dict]) -> str | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    label = data.get("label")
+    if label in catalog and label != "unknown":
+        return label
+    return None
+
+
 def main() -> int:
     args = parse_args()
     catalog = load_catalog(Path(args.catalog))
     current_product = args.current_product if args.current_product in catalog else None
+    if not current_product and not args.ignore_visual_state:
+        current_product = read_current_product_from_visual_state(Path(args.visual_state), catalog)
+        if current_product:
+            item = catalog[current_product]
+            print(f"当前视觉商品> {item.get('name_zh', current_product)} / {current_product}")
 
     if args.asr_text:
         wav_path = None
