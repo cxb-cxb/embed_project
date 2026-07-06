@@ -42,6 +42,26 @@ class QrDisplayStaticTests(unittest.TestCase):
             "a QR from the scan area releases duplicate suppression.",
         )
 
+    def test_current_product_qr_ids_are_mapped(self):
+        code = SRC.read_text(encoding="utf-8", errors="ignore")
+
+        for product_id in [
+            "cola",
+            "noodle",
+            "chips",
+            "biscuit",
+            "milk",
+            "bread",
+            "toothpaste",
+            "water",
+            "tissue",
+            "soap",
+        ]:
+            self.assertIn(f'{{"{product_id}",', code)
+
+        self.assertIn('equals_ignore_case(value, "mineral_water")', code)
+        self.assertIn('equals_ignore_case(value, "instant_noodles")', code)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -45,7 +45,7 @@ fi
 
 cd "$PROJECT_DIR"
 echo "[demo] launching qr_scanner_display on $CAMERA_DEV ${CAMERA_WIDTH}x${CAMERA_HEIGHT}"
-echo "[demo] scan QR payloads: product:cola, product:milk, product:bread, checkout, clear"
+echo "[demo] scan QR payloads: product:cola, product:noodle, product:chips, product:biscuit, product:milk, product:bread, product:toothpaste, product:water, product:tissue, product:soap, checkout, clear"
 
 trap 'echo "[demo] stop requested"; exit 0' INT TERM
 

@@ -1,11 +1,11 @@
 id,display_name,barcode,price_cents,visual_keywords
-mineral_water,Mineral Water,690100000001,200,water|bottle|blue
+water,Water,690100000001,200,water|bottle|blue|mineral_water
 cola,Cola,690100000002,350,cola|soda|red|can
-milk,Milk,690100000003,620,milk|carton|white
-bread,Bread,690100000004,480,bread|toast|bag
-instant_noodles,Instant Noodles,690100000005,550,noodle|bowl|cup
-chips,Potato Chips,690100000006,680,chips|potato|yellow
-coffee,Coffee,690100000007,990,coffee|black|cup
-tea,Tea Drink,690100000008,450,tea|green|bottle
-cookies,Cookies,690100000009,720,cookie|cookies|box
-yogurt,Yogurt,690100000010,580,yogurt|cup|purple
+milk,Milk,690100000003,450,milk|carton|white
+bread,Bread,690100000004,500,bread|toast|bag
+noodle,Instant Noodle,690100000005,400,noodle|instant_noodles|bowl|cup
+chips,Chips,690100000006,600,chips|potato|yellow
+biscuit,Biscuit,690100000007,550,biscuit|cookie|cookies|box
+toothpaste,Toothpaste,690100000008,800,toothpaste|tube
+tissue,Tissue,690100000009,400,tissue|paper
+soap,Soap,690100000010,300,soap

@@ -199,16 +199,16 @@ struct cart_line {
 };
 
 static const struct retail_product g_products[] = {
-    {"mineral_water", "Mineral Water", "690100000001", 200},
+    {"water", "Water", "690100000001", 200},
     {"cola", "Cola", "690100000002", 350},
-    {"milk", "Milk", "690100000003", 620},
-    {"bread", "Bread", "690100000004", 480},
-    {"instant_noodles", "Instant Noodles", "690100000005", 550},
-    {"chips", "Potato Chips", "690100000006", 680},
-    {"coffee", "Coffee", "690100000007", 990},
-    {"tea", "Tea Drink", "690100000008", 450},
-    {"cookies", "Cookies", "690100000009", 720},
-    {"yogurt", "Yogurt", "690100000010", 580},
+    {"milk", "Milk", "690100000003", 450},
+    {"bread", "Bread", "690100000004", 500},
+    {"noodle", "Instant Noodle", "690100000005", 400},
+    {"chips", "Chips", "690100000006", 600},
+    {"biscuit", "Biscuit", "690100000007", 550},
+    {"toothpaste", "Toothpaste", "690100000008", 800},
+    {"tissue", "Tissue", "690100000009", 400},
+    {"soap", "Soap", "690100000010", 300},
 };
 
 static struct cart_line g_cart[MAX_CART_ITEMS];
@@ -245,6 +245,20 @@ static const char *trim_payload(const char *payload)
     return payload;
 }
 
+static int retail_payload_alias_matches(const char *value, const char *product_id)
+{
+    if (equals_ignore_case(product_id, "water")) {
+        return equals_ignore_case(value, "mineral_water") || equals_ignore_case(value, "mineral water");
+    }
+    if (equals_ignore_case(product_id, "noodle")) {
+        return equals_ignore_case(value, "instant_noodles") || equals_ignore_case(value, "instant noodles");
+    }
+    if (equals_ignore_case(product_id, "biscuit")) {
+        return equals_ignore_case(value, "cookies") || equals_ignore_case(value, "cookie");
+    }
+    return 0;
+}
+
 static const struct retail_product *retail_find_product(const char *payload)
 {
     const char *value = trim_payload(payload);
@@ -255,6 +269,7 @@ static const struct retail_product *retail_find_product(const char *payload)
     for (size_t i = 0; i < sizeof(g_products) / sizeof(g_products[0]); i++) {
         if (equals_ignore_case(value, g_products[i].id) ||
             equals_ignore_case(value, g_products[i].name) ||
+            retail_payload_alias_matches(value, g_products[i].id) ||
             strcmp(value, g_products[i].barcode) == 0) {
             return &g_products[i];
         }
