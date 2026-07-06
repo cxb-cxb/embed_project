@@ -29,6 +29,7 @@ for b in /sys/class/backlight/*; do
 done
 
 pkill -9 gst-launch-1.0 2>/dev/null || true
+pkill -9 camera_pgm_stream 2>/dev/null || true
 pkill -9 qr_scanner 2>/dev/null || true
 pkill -9 qr_scanner_display 2>/dev/null || true
 sleep 1
@@ -42,4 +43,14 @@ fi
 cd "$PROJECT_DIR"
 echo "[demo] launching qr_scanner_display on $CAMERA_DEV ${CAMERA_WIDTH}x${CAMERA_HEIGHT}"
 echo "[demo] scan QR payloads: product:cola, product:milk, product:bread, checkout, clear"
-exec ./bin/qr_scanner_display -d "$CAMERA_DEV" -W "$CAMERA_WIDTH" -H "$CAMERA_HEIGHT" -c "$@"
+
+trap 'echo "[demo] stop requested"; exit 0' INT TERM
+
+while true; do
+  ./bin/qr_scanner_display -d "$CAMERA_DEV" -W "$CAMERA_WIDTH" -H "$CAMERA_HEIGHT" -c "$@"
+  rc=$?
+  echo "[demo] qr_scanner_display exited with code $rc; restarting in 2s"
+  pkill -9 gst-launch-1.0 2>/dev/null || true
+  pkill -9 camera_pgm_stream 2>/dev/null || true
+  sleep 2
+done

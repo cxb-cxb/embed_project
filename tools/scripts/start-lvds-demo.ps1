@@ -63,12 +63,12 @@ if (Test-Path $qrScannerDisplay) {
 
 if ($Background) {
     Write-Host "[demo] starting in background. Log: /tmp/qsm_lvds_demo.log"
-    & $adb shell "pkill -9 gst-launch-1.0 2>/dev/null || true; pkill -9 qr_scanner 2>/dev/null || true; pkill -9 qr_scanner_display 2>/dev/null || true; rm -f /tmp/qsm_lvds_demo.log" | Out-Host
+    & $adb shell "pkill -9 gst-launch-1.0 2>/dev/null || true; pkill -9 camera_pgm_stream 2>/dev/null || true; pkill -9 qr_scanner 2>/dev/null || true; pkill -9 qr_scanner_display 2>/dev/null || true; rm -f /tmp/qsm_lvds_demo.log" | Out-Host
     Start-Sleep -Seconds 2
     & $adb shell "cd /userdata/Embed_project; setsid sh scripts/demo_lvds_start.sh >/tmp/qsm_lvds_demo.log 2>&1 </dev/null & sleep 1" | Out-Host
     Start-Sleep -Seconds 3
     & $adb shell "pgrep -af qr_scanner_display; echo --- log ---; tail -40 /tmp/qsm_lvds_demo.log 2>/dev/null || true" | Out-Host
 } else {
     Write-Host "[demo] starting foreground demo. Press Ctrl+C to stop."
-    & $adb shell "rm -f /tmp/qsm_lvds_demo.log; cd /userdata/Embed_project && sh scripts/demo_lvds_start.sh 2>&1 | tee /tmp/qsm_lvds_demo.log"
+    & $adb shell "pkill -9 gst-launch-1.0 2>/dev/null || true; pkill -9 camera_pgm_stream 2>/dev/null || true; rm -f /tmp/qsm_lvds_demo.log; cd /userdata/Embed_project && sh scripts/demo_lvds_start.sh 2>&1 | tee /tmp/qsm_lvds_demo.log"
 }
