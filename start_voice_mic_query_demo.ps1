@@ -6,6 +6,8 @@ param(
     [string]$AsrProvider = "volcengine",
     [string]$CurrentProduct = "",
     [string]$AsrText = "",
+    [ValidateSet("terminal", "wav", "board")]
+    [string]$VoiceOutput = "terminal",
     [switch]$Loop
 )
 
@@ -37,7 +39,13 @@ foreach ($name in @(
 $Script = Join-Path $ProjectRoot "tools\voice_query_from_board_mic.py"
 python -m py_compile $Script
 
-$ArgsList = @($Script, "--seconds", "$Seconds", "--reply-mode", $ReplyMode, "--asr-provider", $AsrProvider)
+$ArgsList = @(
+    $Script,
+    "--seconds", "$Seconds",
+    "--reply-mode", $ReplyMode,
+    "--asr-provider", $AsrProvider,
+    "--voice-output", $VoiceOutput
+)
 if ($CurrentProduct.Trim()) {
     $ArgsList += @("--current-product", $CurrentProduct.Trim())
 }

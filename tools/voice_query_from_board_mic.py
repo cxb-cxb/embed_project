@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 import uuid
+import wave
 from pathlib import Path
 
 from voice_retail_assistant import answer_question, load_catalog
@@ -21,6 +22,7 @@ DEFAULT_CATALOG = PROJECT_ROOT / "catalog.json"
 DEFAULT_OUTPUT_DIR = Path(r"D:\qsm_embed_dataset\voice_samples")
 DEFAULT_VISUAL_STATE = Path(r"D:\qsm_embed_dataset\lvds_overlay_runtime\current_product.json")
 DEFAULT_VOICE_REPLY_STATE = Path(r"D:\qsm_embed_dataset\lvds_overlay_runtime\voice_reply.json")
+DEFAULT_VOICE_OUTPUT_DIR = Path(r"D:\qsm_embed_dataset\voice_reply_output")
 VOLCENGINE_ASR_ENDPOINT = os.environ.get(
     "VOLCENGINE_ASR_ENDPOINT",
     "https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash",
@@ -180,6 +182,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--language", default="zh")
     parser.add_argument("--asr-text", default=None, help="skip ASR and use this text for pipeline testing")
     parser.add_argument("--keep-audio-dir", default=str(DEFAULT_OUTPUT_DIR))
+    parser.add_argument("--voice-output-dir", default=str(DEFAULT_VOICE_OUTPUT_DIR))
+    parser.add_argument(
+        "--voice-output",
+        choices=["terminal", "wav", "board"],
+        default="terminal",
+        help="terminal: text only; wav: also synthesize Windows WAV; board: synthesize and play on board audio",
+    )
     return parser.parse_args()
 
 
@@ -206,6 +215,133 @@ def write_voice_reply_state(path: Path, question: str, reply: str, source: str, 
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
 
+def synthesize_windows_wav(text: str, wav_path: Path) -> bool:
+    wav_path.parent.mkdir(parents=True, exist_ok=True)
+    text_path = wav_path.with_suffix(".txt")
+    script_path = wav_path.with_suffix(".sapi.ps1")
+    text_path.write_text(text, encoding="utf-8")
+    script_path.write_text(
+        "\n".join(
+            [
+                "param([string]$TextPath, [string]$WavPath)",
+                "Add-Type -AssemblyName System.Speech",
+                "$text = Get-Content -LiteralPath $TextPath -Raw -Encoding UTF8",
+                "$speaker = New-Object System.Speech.Synthesis.SpeechSynthesizer",
+                "$speaker.Rate = 0",
+                "$speaker.Volume = 100",
+                "$speaker.SetOutputToWaveFile($WavPath)",
+                "$speaker.Speak($text)",
+                "$speaker.Dispose()",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    try:
+        completed = subprocess.run(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(script_path),
+                "-TextPath",
+                str(text_path),
+                "-WavPath",
+                str(wav_path),
+            ],
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+        )
+    except Exception as exc:
+        print(f"[voice_output=wav_failed: {exc}]")
+        return False
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "").strip()
+        print(f"[voice_output=wav_failed: {detail}]")
+        return False
+    return wav_path.exists() and wav_path.stat().st_size > 44
+
+
+def convert_wav_for_board(src_wav: Path, dst_wav: Path) -> bool:
+    try:
+        with wave.open(str(src_wav), "rb") as src:
+            channels = src.getnchannels()
+            sample_width = src.getsampwidth()
+            frame_rate = src.getframerate()
+        if channels == 1 and sample_width == 2 and frame_rate == 16000:
+            dst_wav.write_bytes(src_wav.read_bytes())
+            return True
+    except wave.Error:
+        pass
+
+    try:
+        completed = subprocess.run(
+            ["ffmpeg", "-y", "-i", str(src_wav), "-ac", "1", "-ar", "16000", "-sample_fmt", "s16", str(dst_wav)],
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+        )
+    except FileNotFoundError:
+        print("[voice_output=board_wav_convert_skipped: ffmpeg not found on PC]")
+        return False
+    if completed.returncode != 0:
+        print(f"[voice_output=board_wav_convert_failed: {(completed.stderr or '').strip()[:300]}]")
+        return False
+    return dst_wav.exists() and dst_wav.stat().st_size > 44
+
+
+def write_software_voice_output(
+    adb: str | None,
+    output_dir: Path,
+    question: str,
+    reply: str,
+    source: str,
+    mode: str,
+) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "question": question,
+        "reply": reply,
+        "source": source,
+        "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "speaker_ready": mode == "board",
+    }
+    json_path = output_dir / "last_reply.json"
+    text_path = output_dir / "last_reply.txt"
+    json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    text_path.write_text(reply, encoding="utf-8")
+    print(f"[voice_output_text={text_path}]")
+
+    if mode == "terminal":
+        return
+
+    sapi_wav = output_dir / "last_reply_sapi.wav"
+    if not synthesize_windows_wav(reply, sapi_wav):
+        return
+    print(f"[voice_output_wav={sapi_wav}]")
+
+    if mode != "board":
+        return
+    if not adb:
+        print("[voice_output=board_play_skipped: adb unavailable]")
+        return
+    board_wav = output_dir / "last_reply_board.wav"
+    if not convert_wav_for_board(sapi_wav, board_wav):
+        return
+    remote_wav = "/tmp/qsm_last_voice_reply.wav"
+    run([adb, "push", str(board_wav), remote_wav], check=True)
+    run([adb, "shell", "amixer -c 0 cset name='Playback Path' 'SPK_HP' >/dev/null 2>&1 || true"], check=False)
+    run([adb, "shell", f"aplay -D hw:0,0 '{remote_wav}'"], check=False)
+
+
 def main() -> int:
     args = parse_args()
     catalog = load_catalog(Path(args.catalog))
@@ -216,6 +352,7 @@ def main() -> int:
             item = catalog[current_product]
             print(f"当前视觉商品> {item.get('name_zh', current_product)} / {current_product}")
 
+    adb = None
     if args.asr_text:
         wav_path = None
         question = args.asr_text.strip()
@@ -241,6 +378,7 @@ def main() -> int:
     write_voice_reply_state(Path(args.voice_reply_state), question, reply, source, current_product)
     print(f"助手> {reply}")
     print(f"[reply_source={source}]")
+    write_software_voice_output(adb, Path(args.voice_output_dir), question, reply, source, args.voice_output)
     if wav_path:
         print(f"[audio={wav_path}]")
     return 0

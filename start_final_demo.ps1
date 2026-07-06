@@ -2,6 +2,8 @@ param(
     [int]$VoiceSeconds = 6,
     [ValidateSet("offline", "auto", "llm")]
     [string]$ReplyMode = "auto",
+    [ValidateSet("terminal", "wav", "board")]
+    [string]$VoiceOutput = "terminal",
     [ValidateSet("qr-cart", "visual-preview", "visual-overlay")]
     [string]$LvdsMode = "qr-cart"
 )
@@ -83,7 +85,7 @@ $voiceCommand = @"
 Set-Location -LiteralPath '$ProjectRoot'
 Write-Host 'Starting board microphone + ASR + smart reply...' -ForegroundColor Cyan
 try {
-    & '$voice' -Seconds $VoiceSeconds -ReplyMode '$ReplyMode'
+    & '$voice' -Seconds $VoiceSeconds -ReplyMode '$ReplyMode' -VoiceOutput '$VoiceOutput'
 } catch {
     Write-Host ''
     Write-Host "VOICE ERROR: `$(`$_.Exception.Message)" -ForegroundColor Red

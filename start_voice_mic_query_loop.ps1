@@ -2,7 +2,9 @@ param(
     [int]$Seconds = 6,
     [ValidateSet("offline", "auto", "llm")]
     [string]$ReplyMode = "offline",
-    [string]$CurrentProduct = ""
+    [string]$CurrentProduct = "",
+    [ValidateSet("terminal", "wav", "board")]
+    [string]$VoiceOutput = "terminal"
 )
 
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -11,4 +13,5 @@ $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
     -AsrProvider volcengine `
     -ReplyMode $ReplyMode `
     -CurrentProduct $CurrentProduct `
+    -VoiceOutput $VoiceOutput `
     -Loop
