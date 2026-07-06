@@ -94,6 +94,16 @@ def find_product_id(question: str, catalog: dict[str, dict[str, Any]], current_p
 
 def detect_intent(question: str) -> str:
     normalized = normalize_text(question)
+    cart_keywords = [
+        ("cart_clear", ["清空购物车", "清空", "cart clear", "clear cart"]),
+        ("cart_checkout", ["结算", "付款", "支付", "买单", "checkout", "pay"]),
+        ("cart_total", ["总价", "一共", "合计", "total"]),
+        ("cart_list", ["购物车", "车里", "买了什么", "有哪些商品", "cart"]),
+    ]
+    for intent, keywords in cart_keywords:
+        if any(keyword in normalized for keyword in keywords):
+            return intent
+
     intent_keywords = [
         ("list", ["有哪些", "都有", "商品列表", "卖什么", "list"]),
         ("price", ["多少钱", "价格", "售价", "几块", "price", "cost"]),
@@ -107,13 +117,66 @@ def detect_intent(question: str) -> str:
     return "general"
 
 
+def format_price(value: float) -> str:
+    return f"{value:g}"
+
+
+def summarize_cart(cart_state: dict[str, Any] | None, catalog: dict[str, dict[str, Any]]) -> str | None:
+    if not cart_state:
+        return None
+    lines = cart_state.get("lines") or []
+    if not lines:
+        return "当前购物车是空的。"
+    parts = []
+    for line in lines:
+        product_id = str(line.get("id", ""))
+        item = catalog.get(product_id, {})
+        name = item.get("name_zh") or line.get("name") or product_id
+        qty = int(line.get("quantity", 0))
+        subtotal = float(line.get("subtotal", 0.0))
+        parts.append(f"{name} {qty} 件，小计 {format_price(subtotal)} 元")
+    total = float(cart_state.get("total", 0.0))
+    return "购物车里有：" + "；".join(parts) + f"。合计 {format_price(total)} 元。"
+
+
+def cart_reply(intent: str, cart_state: dict[str, Any] | None, catalog: dict[str, dict[str, Any]]) -> str | None:
+    if intent == "cart_list":
+        return summarize_cart(cart_state, catalog)
+    if intent == "cart_total":
+        if not cart_state or not cart_state.get("lines"):
+            return "当前购物车是空的，合计 0 元。"
+        total = float(cart_state.get("total", 0.0))
+        count = int(cart_state.get("item_count", 0))
+        return f"购物车共有 {count} 件商品，合计 {format_price(total)} 元。"
+    if intent == "cart_checkout":
+        if not cart_state or float(cart_state.get("total", 0.0)) <= 0:
+            return "购物车还是空的，请先扫码加入商品。"
+        total = float(cart_state.get("total", 0.0))
+        status = str(cart_state.get("status", ""))
+        if "CHECKOUT" in status.upper():
+            return f"订单已准备结算，需支付 {format_price(total)} 元。"
+        return f"购物车合计 {format_price(total)} 元。请扫描 checkout 二维码完成结算。"
+    if intent == "cart_clear":
+        return "清空购物车需要扫描 clear 二维码，语音端当前只做状态查询。"
+    return None
+
+
 def list_products(catalog: dict[str, dict[str, Any]]) -> str:
     names = [item.get("name_zh", product_id) for product_id, item in catalog.items()]
     return "当前已录入商品有：" + "、".join(names) + "。"
 
 
-def offline_reply(question: str, catalog: dict[str, dict[str, Any]], current_product: str | None) -> str:
+def offline_reply(
+    question: str,
+    catalog: dict[str, dict[str, Any]],
+    current_product: str | None,
+    cart_state: dict[str, Any] | None = None,
+) -> str:
     intent = detect_intent(question)
+    reply = cart_reply(intent, cart_state, catalog)
+    if reply:
+        return reply
+
     if intent == "list":
         return list_products(catalog)
 
@@ -216,6 +279,7 @@ def answer_question(
     current_product: str | None,
     mode: str,
     timeout: float,
+    cart_state: dict[str, Any] | None = None,
 ) -> tuple[str, str]:
     if mode in {"auto", "llm"}:
         try:
@@ -223,8 +287,8 @@ def answer_question(
         except (RuntimeError, urllib.error.URLError, urllib.error.HTTPError, TimeoutError, KeyError, IndexError) as exc:
             if mode == "llm":
                 raise RuntimeError(f"LLM reply failed: {exc}") from exc
-            return offline_reply(question, catalog, current_product), f"offline fallback: {exc}"
-    return offline_reply(question, catalog, current_product), "offline"
+            return offline_reply(question, catalog, current_product, cart_state), f"offline fallback: {exc}"
+    return offline_reply(question, catalog, current_product, cart_state), "offline"
 
 
 def parse_args() -> argparse.Namespace:

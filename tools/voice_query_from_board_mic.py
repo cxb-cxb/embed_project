@@ -7,6 +7,7 @@ import argparse
 import base64
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -23,6 +24,7 @@ DEFAULT_OUTPUT_DIR = Path(r"D:\qsm_embed_dataset\voice_samples")
 DEFAULT_VISUAL_STATE = Path(r"D:\qsm_embed_dataset\lvds_overlay_runtime\current_product.json")
 DEFAULT_VOICE_REPLY_STATE = Path(r"D:\qsm_embed_dataset\lvds_overlay_runtime\voice_reply.json")
 DEFAULT_VOICE_OUTPUT_DIR = Path(r"D:\qsm_embed_dataset\voice_reply_output")
+DEFAULT_BOARD_CART_LOG = "/tmp/qsm_lvds_demo.log"
 VOLCENGINE_ASR_ENDPOINT = os.environ.get(
     "VOLCENGINE_ASR_ENDPOINT",
     "https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash",
@@ -34,6 +36,9 @@ VOLCENGINE_ASR_RESOURCE_ID = os.environ.get(
 
 
 def find_adb() -> str:
+    bundled_adb = PROJECT_ROOT / "tools" / "adb" / "adb.exe"
+    if bundled_adb.exists():
+        return str(bundled_adb)
     winget_adb = (
         Path.home()
         / "AppData"
@@ -175,6 +180,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--current-product", default=None)
     parser.add_argument("--visual-state", default=str(DEFAULT_VISUAL_STATE))
     parser.add_argument("--voice-reply-state", default=str(DEFAULT_VOICE_REPLY_STATE))
+    parser.add_argument("--board-cart-log", default=DEFAULT_BOARD_CART_LOG)
+    parser.add_argument("--ignore-cart-state", action="store_true")
     parser.add_argument("--ignore-visual-state", action="store_true")
     parser.add_argument("--reply-mode", choices=["offline", "auto", "llm"], default="offline")
     parser.add_argument("--asr-provider", choices=["volcengine", "openai"], default="volcengine")
@@ -201,6 +208,118 @@ def read_current_product_from_visual_state(path: Path, catalog: dict[str, dict])
     if label in catalog and label != "unknown":
         return label
     return None
+
+
+def build_product_name_index(catalog: dict[str, dict]) -> dict[str, str]:
+    aliases = {
+        "mineral water": "water",
+        "water": "water",
+        "cola": "cola",
+        "milk": "milk",
+        "bread": "bread",
+        "instant noodles": "noodle",
+        "instant noodle": "noodle",
+        "noodle": "noodle",
+        "potato chips": "chips",
+        "chips": "chips",
+        "cookies": "biscuit",
+        "cookie": "biscuit",
+        "biscuit": "biscuit",
+        "toothpaste": "toothpaste",
+        "tissue": "tissue",
+        "soap": "soap",
+    }
+    for product_id, item in catalog.items():
+        aliases[product_id.lower()] = product_id
+        aliases[str(item.get("name", "")).strip().lower()] = product_id
+        aliases[str(item.get("name_zh", "")).strip().lower()] = product_id
+    return {key: value for key, value in aliases.items() if key}
+
+
+def read_board_cart_log(adb: str, remote_log: str) -> str:
+    completed = subprocess.run(
+        [adb, "shell", f"cat {remote_log} 2>/dev/null || true"],
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=8,
+    )
+    return completed.stdout or ""
+
+
+def parse_cart_state_from_log(log_text: str, catalog: dict[str, dict]) -> dict | None:
+    if not log_text.strip():
+        return None
+    name_index = build_product_name_index(catalog)
+    quantities: dict[str, int] = {}
+    total_from_log: float | None = None
+    status = "READY"
+    checkout_done = False
+
+    for raw_line in log_text.splitlines():
+        line = raw_line.strip()
+        control = re.search(r"control:([A-Z _-]+)", line)
+        if control:
+            status = control.group(1).strip()
+            if "CLEARED" in status:
+                quantities.clear()
+                total_from_log = 0.0
+                checkout_done = False
+            elif "CHECKOUT" in status:
+                checkout_done = True
+            continue
+
+        added = re.search(r"added:([^\r\n]+?)\s+total:(\d+)\.(\d{2})", line, re.IGNORECASE)
+        if added:
+            product_name = added.group(1).strip().lower()
+            product_id = name_index.get(product_name)
+            if product_id:
+                quantities[product_id] = quantities.get(product_id, 0) + 1
+            total_from_log = float(f"{added.group(2)}.{added.group(3)}")
+            status = f"ADDED {added.group(1).strip()}"
+            checkout_done = False
+
+    lines = []
+    item_count = 0
+    computed_total = 0.0
+    for product_id, quantity in quantities.items():
+        item = catalog.get(product_id, {})
+        price = float(item.get("price", 0.0))
+        subtotal = round(price * quantity, 2)
+        item_count += quantity
+        computed_total += subtotal
+        lines.append(
+            {
+                "id": product_id,
+                "name": item.get("name", product_id),
+                "name_zh": item.get("name_zh", product_id),
+                "quantity": quantity,
+                "price": price,
+                "subtotal": subtotal,
+            }
+        )
+
+    total = round(total_from_log if total_from_log is not None else computed_total, 2)
+    return {
+        "lines": lines,
+        "item_count": item_count,
+        "total": total,
+        "status": status,
+        "checkout_done": checkout_done,
+    }
+
+
+def read_cart_state_from_board(adb: str | None, remote_log: str, catalog: dict[str, dict]) -> dict | None:
+    if not adb:
+        return None
+    try:
+        log_text = read_board_cart_log(adb, remote_log)
+    except Exception:
+        return None
+    return parse_cart_state_from_log(log_text, catalog)
 
 
 def write_voice_reply_state(path: Path, question: str, reply: str, source: str, current_product: str | None) -> None:
@@ -352,12 +471,17 @@ def main() -> int:
             item = catalog[current_product]
             print(f"当前视觉商品> {item.get('name_zh', current_product)} / {current_product}")
 
-    adb = None
+    adb = None if args.ignore_cart_state else find_adb()
+    cart_state = None if args.ignore_cart_state else read_cart_state_from_board(adb, args.board_cart_log, catalog)
+    if cart_state and cart_state.get("lines"):
+        print(f"购物车状态> {cart_state.get('item_count', 0)} 件，合计 {cart_state.get('total', 0):g} 元")
+
     if args.asr_text:
         wav_path = None
         question = args.asr_text.strip()
     else:
-        adb = find_adb()
+        if adb is None:
+            adb = find_adb()
         wav_path = record_from_board(adb, args.seconds, Path(args.keep_audio_dir))
         try:
             if args.asr_provider == "volcengine":
@@ -374,7 +498,7 @@ def main() -> int:
         return 3
 
     print(f"客户语音识别结果> {question}")
-    reply, source = answer_question(question, catalog, current_product, args.reply_mode, timeout=8.0)
+    reply, source = answer_question(question, catalog, current_product, args.reply_mode, timeout=8.0, cart_state=cart_state)
     write_voice_reply_state(Path(args.voice_reply_state), question, reply, source, current_product)
     print(f"助手> {reply}")
     print(f"[reply_source={source}]")

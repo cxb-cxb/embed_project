@@ -70,5 +70,5 @@ if ($Background) {
     & $adb shell "pgrep -af qr_scanner_display; echo --- log ---; tail -40 /tmp/qsm_lvds_demo.log 2>/dev/null || true" | Out-Host
 } else {
     Write-Host "[demo] starting foreground demo. Press Ctrl+C to stop."
-    & $adb shell "cd /userdata/Embed_project && sh scripts/demo_lvds_start.sh"
+    & $adb shell "rm -f /tmp/qsm_lvds_demo.log; cd /userdata/Embed_project && sh scripts/demo_lvds_start.sh 2>&1 | tee /tmp/qsm_lvds_demo.log"
 }
