@@ -20,6 +20,7 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 DATASET_DIR = BASE_DIR / "dataset" / "product_images"
 RUNTIME_DIR = Path("D:/qsm_embed_dataset/lvds_overlay_runtime")
 CURRENT_PRODUCT_STATE = RUNTIME_DIR / "current_product.json"
+VOICE_REPLY_STATE = RUNTIME_DIR / "voice_reply.json"
 REMOTE_OVERLAY_PNG = "/tmp/live_product_overlay_00000.png"
 KMS_PROCESS: subprocess.Popen | None = None
 ADB = (
@@ -197,6 +198,47 @@ def load_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     return ImageFont.load_default()
 
 
+def read_voice_reply_state() -> dict[str, str]:
+    try:
+        data = json.loads(VOICE_REPLY_STATE.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {
+        "question": str(data.get("question", "")),
+        "reply": str(data.get("reply", "")),
+        "updated_at": str(data.get("updated_at", "")),
+    }
+
+
+def wrap_text_to_width(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
+    max_width: int,
+    max_lines: int,
+) -> list[str]:
+    lines: list[str] = []
+    current = ""
+    for char in text:
+        candidate = current + char
+        bbox = draw.textbbox((0, 0), candidate, font=font)
+        if bbox[2] - bbox[0] <= max_width:
+            current = candidate
+            continue
+        if current:
+            lines.append(current)
+        current = char
+        if len(lines) >= max_lines:
+            break
+    if current and len(lines) < max_lines:
+        lines.append(current)
+    if len(lines) == max_lines and len("".join(lines)) < len(text):
+        lines[-1] = lines[-1].rstrip("。,.， ") + "..."
+    return lines
+
+
 def capture_frame(local_path: Path) -> Image.Image:
     remote = "/tmp/live_product_overlay_frame.pgm"
     run_adb(["shell", "pkill -9 qr_scanner_display 2>/dev/null || true; pkill -9 camera_pgm_stream 2>/dev/null || true"], check=False)
@@ -219,6 +261,7 @@ def draw_overlay(camera_image: Image.Image, label: str, confidence: float, panel
     draw = ImageDraw.Draw(canvas)
     font_big = load_font(40)
     font_mid = load_font(28)
+    font_small = load_font(22)
     is_unknown = label == UNKNOWN_LABEL
     accent = (255, 180, 0) if is_unknown else (0, 255, 0)
 
@@ -252,6 +295,23 @@ def draw_overlay(camera_image: Image.Image, label: str, confidence: float, panel
     draw.text((info_box[0] + 20, info_box[1] + 78), "PRODUCT", fill=(255, 255, 255), font=font_big)
     draw.text((info_box[0] + 20, info_box[1] + 178), title, fill=(255, 255, 255), font=font_mid, spacing=10)
     draw.text((info_box[0] + 20, info_box[1] + 318), score, fill=(255, 255, 0), font=font_mid)
+    voice = read_voice_reply_state()
+    if voice.get("reply"):
+        voice_top = info_box[1] + 385
+        voice_box = (info_box[0] + 14, voice_top, info_box[2] - 14, info_box[3] - 96)
+        draw.rectangle(voice_box, fill=(4, 4, 4), outline=(0, 180, 255), width=2)
+        draw.text((voice_box[0] + 10, voice_box[1] + 10), "VOICE QA", fill=(0, 210, 255), font=font_small)
+        question = "Q: " + voice.get("question", "")
+        reply = "A: " + voice.get("reply", "")
+        y = voice_box[1] + 44
+        for line in wrap_text_to_width(draw, question, font_small, voice_box[2] - voice_box[0] - 20, 2):
+            draw.text((voice_box[0] + 10, y), line, fill=(255, 255, 255), font=font_small)
+            y += 28
+        y += 4
+        for line in wrap_text_to_width(draw, reply, font_small, voice_box[2] - voice_box[0] - 20, 5):
+            draw.text((voice_box[0] + 10, y), line, fill=(255, 255, 0), font=font_small)
+            y += 28
+
     draw.text((info_box[0] + 20, info_box[3] - 70), "LVDS LIVE", fill=accent, font=font_mid)
     return canvas.rotate(-90, expand=True)
 

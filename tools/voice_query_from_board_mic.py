@@ -20,6 +20,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CATALOG = PROJECT_ROOT / "catalog.json"
 DEFAULT_OUTPUT_DIR = Path(r"D:\qsm_embed_dataset\voice_samples")
 DEFAULT_VISUAL_STATE = Path(r"D:\qsm_embed_dataset\lvds_overlay_runtime\current_product.json")
+DEFAULT_VOICE_REPLY_STATE = Path(r"D:\qsm_embed_dataset\lvds_overlay_runtime\voice_reply.json")
 VOLCENGINE_ASR_ENDPOINT = os.environ.get(
     "VOLCENGINE_ASR_ENDPOINT",
     "https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash",
@@ -171,6 +172,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--catalog", default=str(DEFAULT_CATALOG))
     parser.add_argument("--current-product", default=None)
     parser.add_argument("--visual-state", default=str(DEFAULT_VISUAL_STATE))
+    parser.add_argument("--voice-reply-state", default=str(DEFAULT_VOICE_REPLY_STATE))
     parser.add_argument("--ignore-visual-state", action="store_true")
     parser.add_argument("--reply-mode", choices=["offline", "auto", "llm"], default="offline")
     parser.add_argument("--asr-provider", choices=["volcengine", "openai"], default="volcengine")
@@ -190,6 +192,18 @@ def read_current_product_from_visual_state(path: Path, catalog: dict[str, dict])
     if label in catalog and label != "unknown":
         return label
     return None
+
+
+def write_voice_reply_state(path: Path, question: str, reply: str, source: str, current_product: str | None) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "question": question,
+        "reply": reply,
+        "source": source,
+        "current_product": current_product or "",
+        "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
 
 def main() -> int:
@@ -224,6 +238,7 @@ def main() -> int:
 
     print(f"客户语音识别结果> {question}")
     reply, source = answer_question(question, catalog, current_product, args.reply_mode, timeout=8.0)
+    write_voice_reply_state(Path(args.voice_reply_state), question, reply, source, current_product)
     print(f"助手> {reply}")
     print(f"[reply_source={source}]")
     if wav_path:
