@@ -7,8 +7,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(retail_core
+    src/answer_engine.cpp
+    src/cloud_asr.cpp
+    src/cloud_llm.cpp
+    src/cloud_tts.cpp
     src/catalog.cpp
     src/cart.cpp
+    src/microphone_driver.cpp
     src/payment.cpp
     src/recognizer.cpp
     src/voice.cpp

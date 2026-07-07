@@ -1,5 +1,10 @@
+#include "answer_engine.hpp"
 #include "cart.hpp"
 #include "catalog.hpp"
+#include "cloud_asr.hpp"
+#include "cloud_llm.hpp"
+#include "cloud_tts.hpp"
+#include "microphone_driver.hpp"
 #include "payment.hpp"
 #include "recognizer.hpp"
 #include "voice.hpp"
@@ -27,6 +32,10 @@ void printHelp() {
         << "  qr product:<product_id>      add product by QR payload\n"
         << "  see <visual text>            add product by visual keyword\n"
         << "  voice <command>              parse voice command, e.g. add cola\n"
+        << "  ask <question>               answer contest or retail questions in terminal\n"
+        << "  mic <wav> [seconds]          record microphone audio with tinycap on board Linux\n"
+        << "  voiceask [seconds]           record, recognize by cloud ASR, then answer\n"
+        << "  listen                       continuous voice questions until Ctrl+C\n"
         << "  cart                         show cart\n"
         << "  checkout                     create payment link\n"
         << "  clear                        clear cart\n"
@@ -99,6 +108,159 @@ void runVoice(const std::string& command, const Catalog& catalog, Cart& cart) {
     }
 }
 
+void runMicrophoneCapture(std::istringstream& input) {
+    MicrophoneCaptureConfig config;
+    input >> config.output_wav;
+    if (config.output_wav.empty()) {
+        config.output_wav = "/tmp/embed_question.wav";
+    }
+    if (!(input >> config.seconds)) {
+        config.seconds = 3;
+    }
+
+    std::cout << "Recording command: " << MicrophoneDriver::buildRecordCommand(config) << "\n";
+    if (MicrophoneDriver::recordToFile(config)) {
+        std::cout << "Microphone audio saved to " << config.output_wav << "\n";
+    } else {
+        std::cout << "Microphone recording failed. Check arecord, audio device, and permissions.\n";
+    }
+}
+
+std::string answerWithLocalThenLlm(const std::string& question, const Catalog& catalog, const Cart& cart) {
+    const auto local_answer = AnswerEngine::answer(question, catalog, cart);
+    if (!AnswerEngine::isFallbackAnswer(local_answer)) {
+        return local_answer;
+    }
+
+    const auto llm = CloudLlmClient::loadFromEnvironment();
+    if (!CloudLlmClient::isConfigured(llm)) {
+        return local_answer + " Cloud LLM is not configured.";
+    }
+
+    const auto cloud_answer = CloudLlmClient::chat(llm, question);
+    if (cloud_answer.empty()) {
+        return local_answer + " Cloud LLM returned no answer.";
+    }
+    return cloud_answer;
+}
+
+std::string speechTextForAnswer(const std::string& question,
+                                const std::string& display_answer,
+                                const Catalog& catalog,
+                                const Cart& cart) {
+    if (display_answer.find("Milk price is") == 0) {
+        return "牛奶的价格是四元五角。";
+    }
+    if (display_answer.find("Cola price is") == 0) {
+        return "可乐的价格是三元五角。";
+    }
+    if (display_answer.find("Water price is") == 0) {
+        return "矿泉水的价格是两元。";
+    }
+    if (display_answer.find("Bread price is") == 0) {
+        return "面包的价格是五元。";
+    }
+    if (display_answer.find("Available products:") == 0) {
+        return "当前商品包括矿泉水，可乐，牛奶，面包，方便面，薯片，饼干，牙膏，纸巾和香皂。";
+    }
+    if (display_answer.find("Cart is empty") == 0) {
+        return "当前购物车为空。";
+    }
+    if (display_answer.find("Checkout creates") == 0) {
+        return "结算时，系统会根据购物车生成订单和支付链接。";
+    }
+    if (display_answer.find("Voice prompt:") == 0) {
+        return "这是一个基于开发板的智能零售演示系统，支持语音问答，商品识别，购物车和结算。";
+    }
+    return display_answer;
+}
+
+void speakIfConfigured(const std::string& text) {
+    const auto tts = CloudTtsClient::loadFromEnvironment();
+    if (!CloudTtsClient::isConfigured(tts) || text.empty()) {
+        return;
+    }
+    const std::string audio_path = "/tmp/embed_tts_reply.mp3";
+    std::cout << "Speaking...\n";
+    if (!CloudTtsClient::synthesizeToAudio(tts, text, audio_path)) {
+        std::cout << "TTS failed.\n";
+        return;
+    }
+    if (!CloudTtsClient::playAudio(audio_path)) {
+        std::cout << "Audio playback failed.\n";
+    }
+}
+
+void runVoiceAsk(std::istringstream& input, const Catalog& catalog, const Cart& cart) {
+    MicrophoneCaptureConfig mic;
+    mic.output_wav = "/tmp/embed_voiceask.wav";
+    if (!(input >> mic.seconds)) {
+        mic.seconds = 3;
+    }
+
+    CloudAsrConfig asr = CloudAsrClient::loadFromEnvironment();
+    if (!CloudAsrClient::isConfigured(asr)) {
+        std::cout << "Cloud ASR is not configured. Set VOLCANO_ASR_URL, VOLCANO_APP_ID, "
+                  << "VOLCANO_ACCESS_TOKEN, and VOLCANO_ASR_CLUSTER, or set VOLCANO_ASR_COMMAND.\n";
+        return;
+    }
+
+    std::cout << "Recording " << mic.seconds << " seconds...\n";
+    if (!MicrophoneDriver::recordToFile(mic)) {
+        std::cout << "Microphone recording failed.\n";
+        return;
+    }
+
+    std::cout << "Recognizing speech...\n";
+    const auto recognized = CloudAsrClient::recognizeWav(asr, mic.output_wav);
+    if (recognized.empty()) {
+        std::cout << "Speech recognition failed or returned empty text.\n";
+        return;
+    }
+
+    std::cout << "Recognized: " << recognized << "\n";
+    const auto answer = answerWithLocalThenLlm(recognized, catalog, cart);
+    std::cout << answer << "\n";
+    speakIfConfigured(speechTextForAnswer(recognized, answer, catalog, cart));
+}
+
+bool runVoiceAskOnce(const CloudAsrConfig& asr, const Catalog& catalog, const Cart& cart, int seconds) {
+    MicrophoneCaptureConfig mic;
+    mic.output_wav = "/tmp/embed_voiceask.wav";
+    mic.seconds = seconds;
+
+    std::cout << "Listening...\n";
+    if (!MicrophoneDriver::recordToFile(mic)) {
+        std::cout << "Microphone recording failed.\n";
+        return false;
+    }
+
+    const auto recognized = CloudAsrClient::recognizeWav(asr, mic.output_wav);
+    if (recognized.empty()) {
+        std::cout << "No speech recognized.\n";
+        return true;
+    }
+
+    std::cout << "Recognized: " << recognized << "\n";
+    const auto answer = answerWithLocalThenLlm(recognized, catalog, cart);
+    std::cout << answer << "\n";
+    speakIfConfigured(speechTextForAnswer(recognized, answer, catalog, cart));
+    return true;
+}
+
+void runContinuousVoiceAsk(const Catalog& catalog, const Cart& cart) {
+    CloudAsrConfig asr = CloudAsrClient::loadFromEnvironment();
+    if (!CloudAsrClient::isConfigured(asr)) {
+        std::cout << "Cloud ASR is not configured. Run scripts/run_voiceask.sh or set ASR environment variables.\n";
+        return;
+    }
+
+    std::cout << "Continuous voice mode started. Press Ctrl+C to stop.\n";
+    while (true) {
+        runVoiceAskOnce(asr, catalog, cart, 2);
+    }
+}
+
 Catalog loadCatalog(int argc, char** argv) {
     if (argc > 1) {
         return Catalog::loadCsv(argv[1]);
@@ -162,6 +324,18 @@ int main(int argc, char** argv) {
             std::string text;
             std::getline(input, text);
             runVoice(text, catalog, cart);
+        } else if (command == "ask") {
+            std::string question;
+            std::getline(input, question);
+            const auto answer = answerWithLocalThenLlm(question, catalog, cart);
+            std::cout << answer << "\n";
+            speakIfConfigured(speechTextForAnswer(question, answer, catalog, cart));
+        } else if (command == "mic") {
+            runMicrophoneCapture(input);
+        } else if (command == "voiceask") {
+            runVoiceAsk(input, catalog, cart);
+        } else if (command == "listen") {
+            runContinuousVoiceAsk(catalog, cart);
         } else if (command == "cart") {
             printCart(cart);
         } else if (command == "checkout") {
