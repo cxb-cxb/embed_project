@@ -24,6 +24,7 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
@@ -56,6 +57,9 @@
 #define CAMERA_X        24
 #define CAMERA_Y        86
 #define MAX_CART_ITEMS 16
+#define VOICE_STATE_FILE "/tmp/qsm_retail_voice_state"
+#define VOICE_HISTORY_LINES 4
+#define QR_REPEAT_ADD_COOLDOWN_MS 1800
 
 /* ── 全局变量 ────────────────────────────────────────────────────── */
 
@@ -90,6 +94,27 @@ static unsigned int   g_order_seq = 0;
 static int            g_last_total_cents = 0;
 static char           g_order_id[48] = "ORDER: pending";
 static char           g_payment_url[160] = "PAY: scan checkout";
+static time_t         g_voice_state_mtime = 0;
+static char           g_voice_question[160] = "Listening...";
+static char           g_voice_answer[160] = "Scan QR or speak to update cart.";
+static char           g_voice_history[VOICE_HISTORY_LINES][96] = {
+    "SYSTEM READY",
+    "SCAN QR OR SPEAK",
+    "",
+    ""
+};
+static char           g_last_qr_payload[256] = "";
+static int64_t        g_last_qr_add_ms = 0;
+
+struct retail_product;
+
+struct retail_cart_line {
+    const struct retail_product *product;
+    int quantity;
+};
+
+static struct retail_cart_line g_cart[MAX_CART_ITEMS];
+static int g_cart_count = 0;
 
 static void sig_handler(int sig) { (void)sig; g_running = 0; }
 
@@ -564,6 +589,178 @@ static int retail_payload_alias_matches(const char *value, const char *product_i
     return 0;
 }
 
+static const struct retail_product *retail_product_from_payload(const char *payload)
+{
+    const char *value = payload;
+    if (!payload || !payload[0]) return NULL;
+    if (strncmp(payload, "product:", 8) == 0) value = payload + 8;
+    if (strncmp(payload, "qr:", 3) == 0) value = payload + 3;
+
+    for (size_t i = 0; i < sizeof(g_products) / sizeof(g_products[0]); i++) {
+        if (equals_ignore_case(value, g_products[i].id) ||
+            equals_ignore_case(value, g_products[i].barcode) ||
+            retail_payload_alias_matches(value, g_products[i].id)) {
+            return &g_products[i];
+        }
+    }
+    return NULL;
+}
+
+static const uint32_t *retail_product_icon(const struct retail_product *product)
+{
+    if (!product) return UI_ICON_WATER;
+    if (equals_ignore_case(product->id, "water")) return UI_ICON_WATER;
+    if (equals_ignore_case(product->id, "cola")) return UI_ICON_COLA;
+    if (equals_ignore_case(product->id, "milk")) return UI_ICON_MILK;
+    if (equals_ignore_case(product->id, "bread")) return UI_ICON_BREAD;
+    if (equals_ignore_case(product->id, "noodle")) return UI_ICON_NOODLE;
+    if (equals_ignore_case(product->id, "chips")) return UI_ICON_CHIPS;
+    if (equals_ignore_case(product->id, "biscuit")) return UI_ICON_BISCUIT;
+    if (equals_ignore_case(product->id, "toothpaste")) return UI_ICON_TOOTHPASTE;
+    if (equals_ignore_case(product->id, "tissue")) return UI_ICON_TISSUE;
+    if (equals_ignore_case(product->id, "soap")) return UI_ICON_SOAP;
+    return UI_ICON_WATER;
+}
+
+static void retail_cart_add_product(const struct retail_product *product)
+{
+    if (!product) return;
+    for (int i = 0; i < g_cart_count; i++) {
+        if (g_cart[i].product == product) {
+            g_cart[i].quantity++;
+            return;
+        }
+    }
+    if (g_cart_count < MAX_CART_ITEMS) {
+        g_cart[g_cart_count].product = product;
+        g_cart[g_cart_count].quantity = 1;
+        g_cart_count++;
+    }
+}
+
+static void retail_cart_clear(void)
+{
+    memset(g_cart, 0, sizeof(g_cart));
+    g_cart_count = 0;
+}
+
+static int retail_cart_item_count(void)
+{
+    int count = 0;
+    for (int i = 0; i < g_cart_count; i++) count += g_cart[i].quantity;
+    return count;
+}
+
+static int retail_cart_total_cents(void)
+{
+    int total = 0;
+    for (int i = 0; i < g_cart_count; i++) {
+        total += g_cart[i].product->price_cents * g_cart[i].quantity;
+    }
+    return total;
+}
+
+static void money_text(int cents, char *out, size_t out_sz)
+{
+    snprintf(out, out_sz, "%d.%02d", cents / 100, cents % 100);
+}
+
+static void text_from_line(char *out, size_t out_sz, const char *line, const char *prefix)
+{
+    size_t len = strlen(prefix);
+    if (strncmp(line, prefix, len) != 0) return;
+    snprintf(out, out_sz, "%s", line + len);
+    out[strcspn(out, "\r\n")] = '\0';
+}
+
+static void retail_apply_voice_cart_command(const char *cmd)
+{
+    if (!cmd || !cmd[0]) return;
+    if (equals_ignore_case(cmd, "clear")) {
+        retail_cart_clear();
+        return;
+    }
+    if (strncmp(cmd, "add:", 4) == 0) {
+        const struct retail_product *product = retail_product_from_payload(cmd + 4);
+        retail_cart_add_product(product);
+    }
+}
+
+static void retail_push_voice_history(const char *line)
+{
+    if (!line || !line[0]) return;
+    for (int i = 0; i < VOICE_HISTORY_LINES - 1; i++) {
+        snprintf(g_voice_history[i], sizeof(g_voice_history[i]), "%s", g_voice_history[i + 1]);
+    }
+    snprintf(g_voice_history[VOICE_HISTORY_LINES - 1],
+             sizeof(g_voice_history[VOICE_HISTORY_LINES - 1]), "%s", line);
+}
+
+static int retail_apply_voice_state(void)
+{
+    struct stat st;
+    FILE *fp;
+    char line[256];
+    char question[160] = "";
+    char answer[160] = "";
+    char cart_cmd[80] = "";
+
+    if (stat(VOICE_STATE_FILE, &st) < 0) return 0;
+    if (st.st_mtime == g_voice_state_mtime) return 0;
+    fp = fopen(VOICE_STATE_FILE, "r");
+    if (!fp) return 0;
+    while (fgets(line, sizeof(line), fp)) {
+        text_from_line(question, sizeof(question), line, "QUESTION=");
+        text_from_line(answer, sizeof(answer), line, "ANSWER=");
+        text_from_line(cart_cmd, sizeof(cart_cmd), line, "CART_CMD=");
+    }
+    fclose(fp);
+    g_voice_state_mtime = st.st_mtime;
+    if (question[0]) {
+        char line_q[120];
+        snprintf(g_voice_question, sizeof(g_voice_question), "%s", question);
+        snprintf(line_q, sizeof(line_q), "Q: %s", question);
+        retail_push_voice_history(line_q);
+    }
+    if (answer[0]) {
+        char line_a[120];
+        snprintf(g_voice_answer, sizeof(g_voice_answer), "%s", answer);
+        snprintf(line_a, sizeof(line_a), "A: %s", answer);
+        retail_push_voice_history(line_a);
+    }
+    retail_apply_voice_cart_command(cart_cmd);
+    return 1;
+}
+
+static void retail_speak_text_async(const char *text)
+{
+    char cmd[512];
+    char safe[220];
+    size_t j = 0;
+    if (!text || !text[0]) return;
+    for (size_t i = 0; text[i] && j + 1 < sizeof(safe); i++) {
+        if (text[i] == '\'' || text[i] == '\n' || text[i] == '\r') continue;
+        safe[j++] = text[i];
+    }
+    safe[j] = '\0';
+    snprintf(cmd, sizeof(cmd),
+             "sh /userdata/Embed_project/scripts/run_voiceask_speaker.sh ask '%s' >/tmp/qsm_qr_speaker.log 2>&1 &",
+             safe);
+    system(cmd);
+}
+
+static void retail_speak_product_added(const struct retail_product *product)
+{
+    char text[160];
+    if (!product) return;
+    snprintf(text, sizeof(text), "QR recognized %s, added to cart.", product->name);
+    retail_speak_text_async(text);
+    snprintf(g_voice_question, sizeof(g_voice_question), "QR: %s", product->name);
+    snprintf(g_voice_answer, sizeof(g_voice_answer), "Added %s to cart.", product->name);
+    retail_push_voice_history(g_voice_question);
+    retail_push_voice_history(g_voice_answer);
+}
+
 static void retail_create_payment_order(void)
 {
     g_order_seq++;
@@ -655,8 +852,53 @@ static void draw_cart_table(int x, int y, int w, int h,
     uint32_t *fb = (uint32_t *)g_ui_map;
     int fw = g_ui_w;
     int fh = g_ui_h;
-    (void)product;
-    (void)qr_count;
+    char price[24];
+    char qty[16];
+    char total[24];
+    int visible;
+    if (product && qr_count == (unsigned int)-1) {
+        draw_text_rgb(fb, fw, fh, x, y, product, 1, 0xFFFFFFFF);
+    }
+
+    fill_rect_rgb(fb, fw, fh, x, y, w, h, 0xFF0B202B);
+    draw_rect_rgb(fb, fw, fh, x, y, w, h, 0xFF145169, 1);
+    draw_text_rgb(fb, fw, fh, x + 14, y + 12, "CART", 2, 0xFFFFFFFF);
+    draw_text_rgb(fb, fw, fh, x + 26, y + 48, "NO", 1, 0xFFB8CDD5);
+    draw_text_rgb(fb, fw, fh, x + 116, y + 48, "PRODUCT", 1, 0xFFB8CDD5);
+    draw_text_rgb(fb, fw, fh, x + 320, y + 48, "PRICE", 1, 0xFFB8CDD5);
+    draw_text_rgb(fb, fw, fh, x + 412, y + 48, "QTY", 1, 0xFFB8CDD5);
+    draw_text_rgb(fb, fw, fh, x + w - 84, y + 48, "SUB", 1, 0xFFB8CDD5);
+
+    visible = g_cart_count < 3 ? g_cart_count : 3;
+    if (visible == 0) {
+        draw_text_rgb(fb, fw, fh, x + 36, y + 96, "WAITING FOR QR OR VOICE", 2, 0xFFB8CDD5);
+    }
+    for (int i = 0; i < visible; i++) {
+        const struct retail_product *p = g_cart[i].product;
+        int row_y = y + 70 + i * 46;
+        char row_no[8];
+        snprintf(row_no, sizeof(row_no), "%d", i + 1);
+        money_text(p->price_cents, price, sizeof(price));
+        snprintf(qty, sizeof(qty), "%d", g_cart[i].quantity);
+        money_text(p->price_cents * g_cart[i].quantity, total, sizeof(total));
+
+        draw_rect_rgb(fb, fw, fh, x + 10, row_y, w - 20, 42, 0xFF244B5C, 1);
+        draw_text_rgb(fb, fw, fh, x + 42, row_y + 15, row_no, 2, 0xFFFFFFFF);
+        blit_icon_rgb(fb, fw, fh, x + 92, row_y + 2, retail_product_icon(p));
+        draw_text_rgb(fb, fw, fh, x + 166, row_y + 15, p->name, 2, 0xFFFFFFFF);
+        draw_text_rgb(fb, fw, fh, x + 334, row_y + 15, price, 2, 0xFFFFFFFF);
+        draw_text_rgb(fb, fw, fh, x + 448, row_y + 15, qty, 2, 0xFFFFFFFF);
+        draw_text_rgb(fb, fw, fh, x + w - 70, row_y + 15, total, 2, 0xFFFFFFFF);
+    }
+
+    fill_rect_rgb(fb, fw, fh, x + 10, y + h - 50, w - 20, 38, 0xFF0F2C3B);
+    snprintf(qty, sizeof(qty), "%d", retail_cart_item_count());
+    draw_text_rgb(fb, fw, fh, x + 54, y + h - 38, "TOTAL", 2, 0xFFFFFFFF);
+    draw_text_rgb(fb, fw, fh, x + 132, y + h - 42, qty, 3, 0xFFFFFFFF);
+    draw_text_rgb(fb, fw, fh, x + 170, y + h - 38, "ITEMS", 2, 0xFFFFFFFF);
+    money_text(retail_cart_total_cents(), total, sizeof(total));
+    draw_text_rgb(fb, fw, fh, x + w - 142, y + h - 42, total, 3, 0xFF52E27E);
+    return;
 
     fill_rect_rgb(fb, fw, fh, x, y, w, h, 0xFF0B202B);
     draw_rect_rgb(fb, fw, fh, x, y, w, h, 0xFF145169, 1);
@@ -698,8 +940,8 @@ static void draw_payment_panel(int x, int y, int w, int h, unsigned int qr_count
     int fw = g_ui_w;
     int fh = g_ui_h;
 
-    g_last_total_cents = qr_count ? 630 : 180;
-    if (qr_count) {
+    g_last_total_cents = retail_cart_total_cents();
+    if (qr_count || g_last_total_cents > 0) {
         retail_create_payment_order();
     }
 
@@ -730,6 +972,18 @@ static void draw_payment_panel(int x, int y, int w, int h, unsigned int qr_count
     draw_text_utf8_rgb(fb, fw, fh, bx + 58, y + 122, "银联云闪付", 1, 0xFFFFFFFF);
 }
 
+static void draw_voice_history_panel(uint32_t *fb, int fw, int fh,
+                                     int x, int y, int w, int h)
+{
+    fill_rect_rgb(fb, fw, fh, x + 134, y + 16, w - 154, h - 32, 0xFF0F2C3B);
+    draw_rect_rgb(fb, fw, fh, x + 134, y + 16, w - 154, h - 32, 0xFF24536A, 1);
+    for (int i = 0; i < VOICE_HISTORY_LINES; i++) {
+        uint32_t color = (strncmp(g_voice_history[i], "A:", 2) == 0) ? 0xFF52E27E : 0xFFFFFFFF;
+        draw_text_rgb(fb, fw, fh, x + 154, y + 24 + i * 24,
+                      g_voice_history[i], 2, color);
+    }
+}
+
 static void draw_voice_dialog_panel(int x, int y, int w, int h)
 {
     uint32_t *fb = (uint32_t *)g_ui_map;
@@ -749,8 +1003,8 @@ static void draw_voice_dialog_panel(int x, int y, int w, int h)
     fill_rect_rgb(fb, fw, fh, cx - 2, cy - 30, 4, 14, 0xFF34C7FF);
     draw_circle_rgb(fb, fw, fh, cx, cy - 36, 5, 0xFF34C7FF);
 
-    fill_rect_rgb(fb, fw, fh, x + 134, y + 16, w - 154, h - 32, 0xFF0F2C3B);
-    draw_rect_rgb(fb, fw, fh, x + 134, y + 16, w - 154, h - 32, 0xFF24536A, 1);
+    draw_voice_history_panel(fb, fw, fh, x, y, w, h);
+    return;
     draw_text_utf8_rgb(fb, fw, fh, x + 154, y + 30, "客户：多少钱？", 1, 0xFFFFFFFF);
     draw_text_utf8_rgb(fb, fw, fh, x + 154, y + 64, "助手：矿泉水", 1, 0xFF7FFFE0);
     draw_text_rgb(fb, fw, fh, x + 316, y + 60, "2.00", 3, 0xFF52E27E);
@@ -1353,6 +1607,9 @@ int main(int argc, char **argv)
             continue;
         }
         frame++;
+        if (retail_apply_voice_state()) {
+            redraw_dashboard = 1;
+        }
 
         /* LVDS 显示 */
         if (have_display) {
@@ -1396,14 +1653,33 @@ int main(int argc, char **argv)
                     draw_qr_outline(&code, cam_w, cam_h);
                 }
                 if (quirc_decode(&code, &data) == QUIRC_SUCCESS) {
-                    if (strcmp((char *)data.payload, last) != 0) {
-                        printf("\n>>> QR CODE: %s <<<\n", data.payload);
+                    const char *payload = (char *)data.payload;
+                    int64_t qr_now_ms = now_ms();
+                    int same_qr_can_add =
+                        strcmp(payload, g_last_qr_payload) == 0 &&
+                        (qr_now_ms - g_last_qr_add_ms) >= QR_REPEAT_ADD_COOLDOWN_MS;
+                    if (strcmp(payload, last) != 0 || same_qr_can_add) {
+                        const struct retail_product *product =
+                            retail_product_from_payload(payload);
+                        printf("\n>>> QR CODE: %s <<<\n", payload);
                         printf("    ver:%d ecc:%c\n",
                                data.version, "MLHQ"[data.ecc_level]);
                         fflush(stdout);
 
-                        strncpy(last, (char *)data.payload, sizeof(last) - 1);
+                        strncpy(last, payload, sizeof(last) - 1);
+                        last[sizeof(last) - 1] = '\0';
+                        strncpy(g_last_qr_payload, payload, sizeof(g_last_qr_payload) - 1);
+                        g_last_qr_payload[sizeof(g_last_qr_payload) - 1] = '\0';
+                        g_last_qr_add_ms = qr_now_ms;
+                        if (product) {
+                            retail_cart_add_product(product);
+                            retail_speak_product_added(product);
+                        } else {
+                            snprintf(g_voice_question, sizeof(g_voice_question), "QR: %s", last);
+                            snprintf(g_voice_answer, sizeof(g_voice_answer), "Unknown QR payload.");
+                        }
                         found++;
+                        redraw_dashboard = 1;
                         if (!continuous) g_running = 0;
                     }
                 }

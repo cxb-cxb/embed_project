@@ -158,7 +158,7 @@ std::string CloudLlmClient::buildChatCommand(const CloudLlmConfig& config,
     const std::string request_path = response_path + ".request.json";
     const std::string system_prompt =
         "You are a concise smart retail voice assistant for a student embedded board demo. "
-        "Answer in short English ASCII text only. Avoid Chinese characters to prevent terminal mojibake. "
+        "Always answer in Simplified Chinese. Keep replies natural, short, and suitable for TTS playback. "
         "If asked about available products, mention common demo products such as milk, cola, bread, water, chips, coffee, tea, cookies, yogurt, and instant noodles.";
     const std::string request_json =
         "{\"model\":\"" + jsonEscape(config.model) +

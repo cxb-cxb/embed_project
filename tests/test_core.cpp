@@ -191,6 +191,8 @@ void test_cloud_llm_builds_openai_compatible_command() {
            "llm command should include API key");
     expect(command.find("doubao-seed-1-6-flash-250615") != std::string::npos,
            "llm command should include model");
+    expect(command.find("Simplified Chinese") != std::string::npos,
+           "llm system prompt should require Chinese replies");
 }
 
 void test_cloud_llm_extracts_assistant_text() {

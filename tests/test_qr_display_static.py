@@ -172,6 +172,49 @@ class QrDisplayStaticTests(unittest.TestCase):
         self.assertIn('equals_ignore_case(value, "mineral_water")', code)
         self.assertIn('equals_ignore_case(value, "instant_noodles")', code)
 
+    def test_dynamic_cart_and_voice_state_are_used_by_ui(self):
+        code = SRC.read_text(encoding="utf-8", errors="ignore")
+
+        for symbol in [
+            "VOICE_STATE_FILE",
+            "/tmp/qsm_retail_voice_state",
+            "struct retail_cart_line",
+            "retail_cart_add_product(",
+            "retail_apply_voice_state(",
+            "draw_cart_table(side_x",
+            "draw_voice_dialog_panel(24",
+        ]:
+            with self.subTest(symbol=symbol):
+                self.assertIn(symbol, code)
+
+        self.assertNotIn("(void)product;\n    (void)qr_count;", code)
+
+    def test_qr_decode_updates_cart_and_speaks(self):
+        code = SRC.read_text(encoding="utf-8", errors="ignore")
+        decode_pos = code.index("quirc_decode(&code, &data)")
+        qr_block = code[decode_pos: decode_pos + 2200]
+
+        self.assertIn("retail_product_from_payload(", qr_block)
+        self.assertIn("retail_cart_add_product(product);", qr_block)
+        self.assertIn("retail_speak_product_added(product);", qr_block)
+        self.assertIn("redraw_dashboard = 1;", qr_block)
+
+    def test_voice_panel_uses_scroll_history_and_qr_repeat_can_accumulate(self):
+        code = SRC.read_text(encoding="utf-8", errors="ignore")
+
+        for symbol in [
+            "VOICE_HISTORY_LINES",
+            "g_voice_history",
+            "retail_push_voice_history(",
+            "draw_voice_history_panel(",
+            "g_last_qr_payload",
+            "g_last_qr_add_ms",
+            "QR_REPEAT_ADD_COOLDOWN_MS",
+            "same_qr_can_add",
+        ]:
+            with self.subTest(symbol=symbol):
+                self.assertIn(symbol, code)
+
 
 if __name__ == "__main__":
     unittest.main()
