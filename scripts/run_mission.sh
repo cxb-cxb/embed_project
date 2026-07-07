@@ -12,16 +12,16 @@ echo "[mission] stopping old voice processes..."
 killall start_voice_auto_listen.sh run_voiceask_speaker.sh embed_project arecord tinyplay aplay mpg123 2>/dev/null || true
 
 echo "[mission] applying speaker and microphone config..."
-if [ -x "$SCRIPT_DIR/configure_board_voice_speaker.sh" ]; then
-    "$SCRIPT_DIR/configure_board_voice_speaker.sh" || true
+if [ -f "$SCRIPT_DIR/configure_board_voice_speaker.sh" ]; then
+    sh "$SCRIPT_DIR/configure_board_voice_speaker.sh" || true
 fi
 
 echo "[mission] starting retail screen..."
-"$SCRIPT_DIR/start_retail_lvds_ui.sh"
+sh "$SCRIPT_DIR/start_retail_lvds_ui.sh"
 
 echo "[mission] starting voice listener..."
 rm -f "$VOICE_LOG" "$VOICE_PID"
-nohup "$SCRIPT_DIR/start_voice_auto_listen.sh" > "$VOICE_LOG" 2>&1 &
+nohup sh "$SCRIPT_DIR/start_voice_auto_listen.sh" > "$VOICE_LOG" 2>&1 &
 echo "$!" > "$VOICE_PID"
 
 sleep 2

@@ -14,6 +14,7 @@ fi
 VOICE_WAKE_SECONDS="${VOICE_WAKE_SECONDS:-2}"
 VOICE_COMMAND_SECONDS="${VOICE_COMMAND_SECONDS:-4}"
 VOICE_SESSION_SECONDS="${VOICE_SESSION_SECONDS:-60}"
+VOICE_LOOP_PAUSE_SECONDS="${VOICE_LOOP_PAUSE_SECONDS:-0.2}"
 WAKE_ACK_TEXT="${WAKE_ACK_TEXT:-我在}"
 
 trap 'echo; echo "Auto voice listener stopped."; exit 0' INT TERM
@@ -59,13 +60,13 @@ fi
 if [ "${SKIP_WELCOME:-1}" != "1" ]; then
     play_cached_welcome
 fi
-"$PROJECT_DIR/scripts/run_voiceask_speaker.sh" --prepare-cache >/tmp/qsm_wake_ack_cache.log 2>&1 || true
+sh "$PROJECT_DIR/scripts/run_voiceask_speaker.sh" --prepare-cache >/tmp/qsm_wake_ack_cache.log 2>&1 &
 
 echo "Auto voice listener is running. Say wake word first, then talk for ${VOICE_SESSION_SECONDS}s after '$WAKE_ACK_TEXT'. Press Ctrl+C to stop."
 
 while true; do
     prepare_audio
     echo "Listening for wake word..."
-    "$PROJECT_DIR/scripts/run_voiceask_speaker.sh" --wake-once "$VOICE_WAKE_SECONDS" || true
-    sleep "${VOICE_LOOP_PAUSE_SECONDS:-1}"
+    sh "$PROJECT_DIR/scripts/run_voiceask_speaker.sh" --wake-once "$VOICE_WAKE_SECONDS" || true
+    sleep "$VOICE_LOOP_PAUSE_SECONDS"
 done

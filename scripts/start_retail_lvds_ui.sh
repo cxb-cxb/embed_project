@@ -18,6 +18,7 @@ CAMERA_DEV="${CAMERA_DEV:-/dev/video5}"
 CAMERA_WIDTH="${CAMERA_WIDTH:-800}"
 CAMERA_HEIGHT="${CAMERA_HEIGHT:-600}"
 STOP_FILE="/tmp/qr_scanner_display.stop"
+chmod +x /userdata/Embed_project/bin/qr_scanner_display 2>/dev/null || true
 
 for b in /sys/class/backlight/*; do
   [ -e "$b" ] || continue

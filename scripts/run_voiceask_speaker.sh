@@ -12,7 +12,7 @@ WAKE_ACK_WAV="$CACHE_DIR/wake_ack_tts.wav"
 WELCOME_TEXT="${WELCOME_TEXT:-欢迎来到智能售货机。}"
 VOICE_STATE_FILE="${VOICE_STATE_FILE:-/tmp/qsm_retail_voice_state}"
 PAYMENT_WAIT_FILE="${PAYMENT_WAIT_FILE:-/tmp/qsm_payment_waiting_method}"
-VOICE_WAKE_WORDS="${VOICE_WAKE_WORDS:-小智小智|小智|智能售货机|售货机}"
+VOICE_WAKE_WORDS="${VOICE_WAKE_WORDS:-小智小智}"
 WAKE_ACK_TEXT="${WAKE_ACK_TEXT:-我在}"
 
 if [ -f "$ASR_ENV" ]; then
@@ -85,8 +85,7 @@ voice_payment_method_command() {
 is_wake_text() {
     q="$(printf '%s' "$1" | tr 'A-Z' 'a-z')"
     case "$q" in
-        *语音助手*|*你好助手*|*小智*|*小知*|*智慧零售*|*售货机*|*智能售货机*|\
-        *voice*assistant*|*hello*assistant*|*xiao*zhi*|*xiaozhi*|*assistant*)
+        *小智小智*)
             return 0
             ;;
         *)
@@ -97,18 +96,7 @@ is_wake_text() {
 
 extract_wake_command() {
     printf '%s' "$1" | tr 'A-Z' 'a-z' | sed \
-        -e 's/语音助手//g' \
-        -e 's/你好助手//g' \
-        -e 's/小智//g' \
-        -e 's/小知//g' \
-        -e 's/智慧零售//g' \
-        -e 's/智能售货机//g' \
-        -e 's/售货机//g' \
-        -e 's/voice assistant//g' \
-        -e 's/hello assistant//g' \
-        -e 's/xiao zhi//g' \
-        -e 's/xiaozhi//g' \
-        -e 's/assistant//g' \
+        -e 's/小智小智//g' \
         -e 's/^[[:space:]，,。.!！?？：:、-]*//' \
         -e 's/[[:space:]，,。.!！?？：:、-]*$//'
 }
@@ -418,6 +406,14 @@ play_wake_ack() {
     fi
 }
 
+play_wake_ack_maybe_async() {
+    if [ "${VOICE_WAKE_ACK_ASYNC:-1}" = "1" ]; then
+        ( play_wake_ack >/tmp/qsm_wake_ack_play.log 2>&1 || true ) &
+    else
+        play_wake_ack
+    fi
+}
+
 request_open_chat() {
     question="$1"
     raw="/tmp/embed_open_chat_response.http"
@@ -582,8 +578,9 @@ run_wake_once() {
 
     command_text="$(extract_wake_command "$wake_text")"
     echo "Wake word detected."
+    echo "$WAKE_ACK_TEXT"
     write_voice_state "唤醒成功" "$WAKE_ACK_TEXT" ""
-    play_wake_ack
+    play_wake_ack_maybe_async
 
     if [ -n "$command_text" ] && [ "$(printf '%s' "$command_text" | wc -c | tr -d ' ')" -ge 4 ]; then
         run_open_chat_reply "$command_text" || true

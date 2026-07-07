@@ -17,6 +17,9 @@ class VoiceAutoListenScriptTest(unittest.TestCase):
         self.assertIn("/tmp/qsm_auto_voice.log", text)
         self.assertIn("/tmp/qsm_auto_voice.pid", text)
         self.assertIn("run_mission is ready", text)
+        self.assertIn('sh "$SCRIPT_DIR/configure_board_voice_speaker.sh"', text)
+        self.assertIn('sh "$SCRIPT_DIR/start_retail_lvds_ui.sh"', text)
+        self.assertIn('nohup sh "$SCRIPT_DIR/start_voice_auto_listen.sh"', text)
 
     def test_auto_listen_script_runs_voiceask_without_read_prompt(self):
         script = ROOT / "scripts" / "start_voice_auto_listen.sh"
@@ -130,6 +133,9 @@ class VoiceAutoListenScriptTest(unittest.TestCase):
         self.assertIn("run_wake_once()", text)
         self.assertIn("WAKE_ACK_TEXT", text)
         self.assertIn("play_wake_ack", text)
+        self.assertIn("play_wake_ack_maybe_async", text)
+        self.assertIn("VOICE_WAKE_ACK_ASYNC", text)
+        self.assertIn('VOICE_WAKE_WORDS="${VOICE_WAKE_WORDS:-小智小智}"', text)
         self.assertIn("Wake word detected", text)
         self.assertIn("Retail command detected without wake word.", text)
         self.assertIn('voice_cart_command "$wake_text"', text)
@@ -165,6 +171,16 @@ class VoiceAutoListenScriptTest(unittest.TestCase):
         self.assertIn("display_seconds=", text)
         self.assertIn('echo "Please speak now. Recording ${display_seconds} seconds..."', text)
 
+    def test_auto_listener_invokes_voice_script_through_sh_quickly(self):
+        script = ROOT / "scripts" / "start_voice_auto_listen.sh"
+        self.assertTrue(script.exists())
+
+        text = script.read_text(encoding="utf-8", errors="ignore")
+        self.assertIn('VOICE_LOOP_PAUSE_SECONDS="${VOICE_LOOP_PAUSE_SECONDS:-0.2}"', text)
+        self.assertIn('sh "$PROJECT_DIR/scripts/run_voiceask_speaker.sh" --prepare-cache', text)
+        self.assertIn('sh "$PROJECT_DIR/scripts/run_voiceask_speaker.sh" --wake-once "$VOICE_WAKE_SECONDS"', text)
+        self.assertIn('sleep "$VOICE_LOOP_PAUSE_SECONDS"', text)
+
     def test_speaker_config_uses_slightly_louder_lp_ln_volume(self):
         script = ROOT / "scripts" / "configure_board_voice_speaker.sh"
         self.assertTrue(script.exists())
@@ -176,8 +192,10 @@ class VoiceAutoListenScriptTest(unittest.TestCase):
         self.assertIn("export VOICE_WAKE_SECONDS=2", text)
         self.assertIn("export VOICE_COMMAND_SECONDS=4", text)
         self.assertIn("export VOICE_SESSION_SECONDS=60", text)
+        self.assertIn("export VOICE_LOOP_PAUSE_SECONDS=0.2", text)
         self.assertIn("export VOICE_TTS_ASYNC=1", text)
         self.assertIn("export VOICE_RETAIL_TTS=0", text)
+        self.assertIn("export VOICE_WAKE_ACK_ASYNC=1", text)
         self.assertIn('export WAKE_ACK_TEXT="我在"', text)
 
 

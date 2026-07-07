@@ -1196,7 +1196,7 @@ static void draw_payment_panel(int x, int y, int w, int h, unsigned int qr_count
             }
         }
     }
-    draw_text_utf8_rgb(fb, fw, fh, x + 122, y + 26, "扫码支付", 1, 0xFFFFFFFF);
+    draw_text_utf8_rgb(fb, fw, fh, x + 122, y + 26, "选择支付方式", 1, 0xFFFFFFFF);
     draw_text_utf8_rgb(fb, fw, fh, x + 122, y + 56, "订单", 1, 0xFFCED7DD);
     draw_text_rgb(fb, fw, fh, x + 178, y + 54, "000123", 2, 0xFFFFFFFF);
     draw_text_utf8_rgb(fb, fw, fh, x + 122, y + 82, "请在", 1, 0xFFCED7DD);
@@ -1219,8 +1219,8 @@ static void draw_payment_panel(int x, int y, int w, int h, unsigned int qr_count
     fill_rect_rgb(fb, fw, fh, bx, y + 70, bw, 36, 0xFF0A84FF);
     fill_rect_rgb(fb, fw, fh, bx, y + 116, bw, 36, 0xFFDC2626);
     draw_text_utf8_rgb(fb, fw, fh, bx + 70, y + 30, "微信支付", 1, 0xFFFFFFFF);
-    draw_text_utf8_rgb(fb, fw, fh, bx + 82, y + 76, "支付宝", 1, 0xFFFFFFFF);
-    draw_text_utf8_rgb(fb, fw, fh, bx + 58, y + 122, "银联云闪付", 1, 0xFFFFFFFF);
+    draw_text_utf8_rgb(fb, fw, fh, bx + 70, y + 76, "支付宝支付", 1, 0xFFFFFFFF);
+    draw_text_utf8_rgb(fb, fw, fh, bx + 44, y + 122, "云闪付暂不可用", 1, 0xFFFFFFFF);
 }
 
 static void draw_payment_popup(void)
