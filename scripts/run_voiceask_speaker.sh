@@ -12,7 +12,7 @@ WAKE_ACK_WAV="$CACHE_DIR/wake_ack_tts.wav"
 WELCOME_TEXT="${WELCOME_TEXT:-欢迎来到智能售货机。}"
 VOICE_STATE_FILE="${VOICE_STATE_FILE:-/tmp/qsm_retail_voice_state}"
 PAYMENT_WAIT_FILE="${PAYMENT_WAIT_FILE:-/tmp/qsm_payment_waiting_method}"
-VOICE_WAKE_WORDS="${VOICE_WAKE_WORDS:-小智小智}"
+VOICE_WAKE_WORDS="${VOICE_WAKE_WORDS:-小智}"
 WAKE_ACK_TEXT="${WAKE_ACK_TEXT:-我在}"
 
 if [ -f "$ASR_ENV" ]; then
@@ -85,7 +85,7 @@ voice_payment_method_command() {
 is_wake_text() {
     q="$(printf '%s' "$1" | tr 'A-Z' 'a-z')"
     case "$q" in
-        *小智小智*)
+        *小智*)
             return 0
             ;;
         *)
@@ -96,7 +96,7 @@ is_wake_text() {
 
 extract_wake_command() {
     printf '%s' "$1" | tr 'A-Z' 'a-z' | sed \
-        -e 's/小智小智//g' \
+        -e 's/小智//g' \
         -e 's/^[[:space:]，,。.!！?？：:、-]*//' \
         -e 's/[[:space:]，,。.!！?？：:、-]*$//'
 }
@@ -643,9 +643,9 @@ run_embed_command() {
             ensure_dns
             prepare_mic
             if [ "$mode" = "wake_only" ]; then
-                echo "请说唤醒词“小智小智”。录音 ${VOICE_WAKE_SECONDS:-3} 秒..."
+                echo "请说唤醒词“小智”。录音 ${VOICE_WAKE_SECONDS:-3} 秒..."
             elif [ "$require_wake" -eq 1 ]; then
-                echo "请先说唤醒词“小智小智”，再提出问题。录音 ${VOICE_SECONDS:-8} 秒..."
+                echo "请先说唤醒词“小智”，再提出问题。录音 ${VOICE_SECONDS:-8} 秒..."
             else
                 echo "请开始提问。录音 ${VOICE_SECONDS:-8} 秒..."
             fi
@@ -668,7 +668,7 @@ run_embed_command() {
 
     if [ "$require_wake" -eq 1 ]; then
         if ! contains_wake_word "$question"; then
-            echo "已听到语音，但未检测到唤醒词“小智小智”，本次不回复。"
+            echo "已听到语音，但未检测到唤醒词“小智”，本次不回复。"
             return 1
         fi
         question="$(strip_wake_word "$question")"
@@ -714,7 +714,7 @@ run_embed_command() {
     play_latest_tts || true
 }
 
-echo "QSM voice assistant with wake word is starting. Wake word: 小智小智"
+echo "QSM voice assistant with wake word is starting. Wake word: 小智"
 ensure_network
 prepare_speaker
 

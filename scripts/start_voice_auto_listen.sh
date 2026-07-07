@@ -52,7 +52,7 @@ play_cached_welcome() {
     fi
 }
 
-echo "Auto voice listener is starting. Wake word: 小智小智."
+echo "Auto voice listener is starting. Wake word: 小智."
 prepare_audio
 if [ "${SKIP_BEEP:-1}" != "1" ]; then
     play_ready_beep
