@@ -74,6 +74,10 @@ voice_payment_method_command() {
             printf 'pay:alipay\n'
             return
             ;;
+        *unionpay*|*union*pay*|*银联*|*雲閃付*|*云闪付*|*银联云闪付*|*用云闪付*|*用银联*)
+            printf 'pay:unionpay\n'
+            return
+            ;;
     esac
     printf '\n'
 }
@@ -156,7 +160,7 @@ strip_wake_word() {
 local_cart_reply() {
     case "$1" in
         checkout_pending)
-            printf '%s\n' "好的，正在为您结账。请选择微信还是支付宝。"
+            printf '%s\n' "好的，正在为您结账。请选择微信支付、支付宝支付或银联云闪付。"
             return 0
             ;;
         pay:wechat)
@@ -165,6 +169,10 @@ local_cart_reply() {
             ;;
         pay:alipay)
             printf '%s\n' "好的，已为您打开支付宝收款码，请扫码支付。"
+            return 0
+            ;;
+        pay:unionpay)
+            printf '%s\n' "抱歉，银联云闪付暂不可用，请选择微信支付或支付宝支付。"
             return 0
             ;;
         clear)
@@ -452,6 +460,16 @@ is_retail_question() {
 run_open_chat_reply() {
     question="$1"
     [ -n "$question" ] || return 1
+    cart_cmd="$(voice_payment_method_command "$question")"
+    if [ -n "$cart_cmd" ]; then
+        rm -f "$PAYMENT_WAIT_FILE"
+        answer="$(local_cart_reply "$cart_cmd")" || return 1
+        echo "Retail command: $cart_cmd"
+        echo "Assistant: $answer"
+        write_voice_state "$question" "$answer" "$cart_cmd"
+        play_text_tts "$answer" || true
+        return 0
+    fi
     if [ -f "$PAYMENT_WAIT_FILE" ]; then
         cart_cmd="$(voice_payment_method_command "$question")"
         if [ -n "$cart_cmd" ]; then
@@ -513,7 +531,7 @@ run_voice_question_once() {
 }
 
 run_active_session() {
-    session_seconds="${VOICE_SESSION_SECONDS:-120}"
+    session_seconds="${VOICE_SESSION_SECONDS:-60}"
     now="$(date +%s 2>/dev/null || echo 0)"
     session_end=$((now + session_seconds))
 

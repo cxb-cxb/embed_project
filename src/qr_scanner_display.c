@@ -876,7 +876,7 @@ static void retail_apply_voice_cart_command(const char *cmd)
         g_payment_method[0] = '\0';
         g_payment_popup_until_ms = 0;
         snprintf(g_voice_question, sizeof(g_voice_question), "CHECKOUT");
-        snprintf(g_voice_answer, sizeof(g_voice_answer), "请选择微信还是支付宝");
+        snprintf(g_voice_answer, sizeof(g_voice_answer), "请选择微信支付、支付宝支付或银联云闪付");
         retail_push_voice_history(g_voice_question);
         retail_push_voice_history(g_voice_answer);
         return;
@@ -887,6 +887,16 @@ static void retail_apply_voice_cart_command(const char *cmd)
     }
     if (equals_ignore_case(cmd, "pay:alipay")) {
         retail_show_payment_popup("alipay");
+        return;
+    }
+    if (equals_ignore_case(cmd, "pay:unionpay")) {
+        g_payment_method[0] = '\0';
+        g_payment_popup_until_ms = 0;
+        g_checkout_requested = 1;
+        snprintf(g_voice_question, sizeof(g_voice_question), "银联云闪付");
+        snprintf(g_voice_answer, sizeof(g_voice_answer), "该支付方式暂不可用");
+        retail_push_voice_history(g_voice_question);
+        retail_push_voice_history(g_voice_answer);
         return;
     }
     if (strncmp(cmd, "add:", 4) == 0) {

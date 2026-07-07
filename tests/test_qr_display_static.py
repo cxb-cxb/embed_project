@@ -220,6 +220,8 @@ class QrDisplayStaticTests(unittest.TestCase):
             "retail_hide_payment_popup(",
             "pay:wechat",
             "pay:alipay",
+            "pay:unionpay",
+            "该支付方式暂不可用",
         ]:
             with self.subTest(symbol=symbol):
                 self.assertIn(symbol, code)

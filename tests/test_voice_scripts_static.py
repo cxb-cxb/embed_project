@@ -89,16 +89,21 @@ class VoiceAutoListenScriptTest(unittest.TestCase):
         self.assertIn("checkout_pending", text)
         self.assertIn("pay:wechat", text)
         self.assertIn("pay:alipay", text)
+        self.assertIn("pay:unionpay", text)
         self.assertIn("PAYMENT_WAIT_FILE", text)
         self.assertIn("voice_payment_method_command()", text)
-        self.assertIn("请选择微信还是支付宝", text)
+        self.assertIn("请选择微信支付、支付宝支付或银联云闪付", text)
+        self.assertIn("银联云闪付暂不可用", text)
+        payment_pos = text.index('cart_cmd="$(voice_payment_method_command "$question")"')
+        checkout_pos = text.index('cart_cmd="$(voice_cart_command "$question")"')
+        self.assertLess(payment_pos, checkout_pos)
 
     def test_checkout_and_payment_keywords_cover_common_asr_variants(self):
         script = ROOT / "scripts" / "run_voiceask_speaker.sh"
         self.assertTrue(script.exists())
 
         text = script.read_text(encoding="utf-8", errors="ignore")
-        for keyword in ["付钱", "买好了", "付一下", "扫微信", "用微信", "扫支付宝", "用支付宝"]:
+        for keyword in ["付钱", "买好了", "付一下", "扫微信", "用微信", "扫支付宝", "用支付宝", "云闪付", "用银联"]:
             with self.subTest(keyword=keyword):
                 self.assertIn(keyword, text)
 
@@ -164,7 +169,7 @@ class VoiceAutoListenScriptTest(unittest.TestCase):
         self.assertIn("export VOICE_SECONDS=4", text)
         self.assertIn("export VOICE_WAKE_SECONDS=2", text)
         self.assertIn("export VOICE_COMMAND_SECONDS=5", text)
-        self.assertIn("export VOICE_SESSION_SECONDS=120", text)
+        self.assertIn("export VOICE_SESSION_SECONDS=60", text)
         self.assertIn('export WAKE_ACK_TEXT="我在"', text)
 
 
