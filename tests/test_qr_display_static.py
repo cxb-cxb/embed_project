@@ -204,6 +204,30 @@ class QrDisplayStaticTests(unittest.TestCase):
         self.assertIn("retail_create_payment_order();", code)
         self.assertIn("PAYMENT READY", code)
 
+    def test_payment_method_overlay_uses_real_qr_assets_and_timeout(self):
+        code = SRC.read_text(encoding="utf-8", errors="ignore")
+
+        for symbol in [
+            "PAYMENT_QR_W",
+            "PAYMENT_QR_H",
+            "PAYMENT_POPUP_MS",
+            "PAYMENT_WECHAT_BGRA",
+            "PAYMENT_ALIPAY_BGRA",
+            "g_payment_method",
+            "g_payment_popup_until_ms",
+            "load_payment_qr_assets(",
+            "draw_payment_popup(",
+            "retail_hide_payment_popup(",
+            "pay:wechat",
+            "pay:alipay",
+        ]:
+            with self.subTest(symbol=symbol):
+                self.assertIn(symbol, code)
+
+    def test_qr_repeat_add_cooldown_is_fast_for_checkout_demo(self):
+        code = SRC.read_text(encoding="utf-8", errors="ignore")
+        self.assertIn("#define QR_REPEAT_ADD_COOLDOWN_MS 800", code)
+
     def test_qr_decode_updates_cart_and_speaks(self):
         code = SRC.read_text(encoding="utf-8", errors="ignore")
         decode_pos = code.index("quirc_decode(&code, &data)")

@@ -81,6 +81,27 @@ class VoiceAutoListenScriptTest(unittest.TestCase):
         self.assertLess(cart_pos, open_pos)
         self.assertIn("Retail command:", text)
 
+    def test_checkout_asks_for_payment_method_before_showing_code(self):
+        script = ROOT / "scripts" / "run_voiceask_speaker.sh"
+        self.assertTrue(script.exists())
+
+        text = script.read_text(encoding="utf-8", errors="ignore")
+        self.assertIn("checkout_pending", text)
+        self.assertIn("pay:wechat", text)
+        self.assertIn("pay:alipay", text)
+        self.assertIn("PAYMENT_WAIT_FILE", text)
+        self.assertIn("voice_payment_method_command()", text)
+        self.assertIn("请选择微信还是支付宝", text)
+
+    def test_checkout_and_payment_keywords_cover_common_asr_variants(self):
+        script = ROOT / "scripts" / "run_voiceask_speaker.sh"
+        self.assertTrue(script.exists())
+
+        text = script.read_text(encoding="utf-8", errors="ignore")
+        for keyword in ["付钱", "买好了", "付一下", "扫微信", "用微信", "扫支付宝", "用支付宝"]:
+            with self.subTest(keyword=keyword):
+                self.assertIn(keyword, text)
+
     def test_voice_state_keeps_utf8_chinese_for_ui(self):
         script = ROOT / "scripts" / "run_voiceask_speaker.sh"
         self.assertTrue(script.exists())

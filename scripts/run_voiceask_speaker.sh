@@ -11,6 +11,7 @@ WAKE_ACK_MP3="$CACHE_DIR/wake_ack_tts.mp3"
 WAKE_ACK_WAV="$CACHE_DIR/wake_ack_tts.wav"
 WELCOME_TEXT="${WELCOME_TEXT:-欢迎来到智能售货机。}"
 VOICE_STATE_FILE="${VOICE_STATE_FILE:-/tmp/qsm_retail_voice_state}"
+PAYMENT_WAIT_FILE="${PAYMENT_WAIT_FILE:-/tmp/qsm_payment_waiting_method}"
 VOICE_WAKE_WORDS="${VOICE_WAKE_WORDS:-小智小智|小智|智能售货机|售货机}"
 WAKE_ACK_TEXT="${WAKE_ACK_TEXT:-我在}"
 
@@ -42,7 +43,7 @@ voice_cart_command() {
             printf 'clear\n'
             return
             ;;
-        *checkout*|*pay*|*payment*|*jiesuan*|*结账*|*支付*|*买单*|*付款*|*一共*多少钱*|*总共*多少钱*|*合计*|*总价*)
+        *checkout*|*pay*|*payment*|*jiesuan*|*结账*|*支付*|*买单*|*付款*|*付钱*|*付一下*|*买好了*|*一共*多少钱*|*总共*多少钱*|*合计*|*总价*)
             printf 'checkout\n'
             return
             ;;
@@ -58,6 +59,21 @@ voice_cart_command() {
         *add*toothpaste*|*buy*toothpaste*|*scan*toothpaste*|*加入*牙膏*|*买*牙膏*) printf 'add:toothpaste\n'; return ;;
         *add*tissue*|*buy*tissue*|*scan*tissue*|*加入*纸巾*|*买*纸巾*) printf 'add:tissue\n'; return ;;
         *add*soap*|*buy*soap*|*scan*soap*|*加入*香皂*|*买*香皂*) printf 'add:soap\n'; return ;;
+    esac
+    printf '\n'
+}
+
+voice_payment_method_command() {
+    q="$(printf '%s' "$1" | tr 'A-Z' 'a-z')"
+    case "$q" in
+        *wechat*|*weixin*|*微信*|*微信支付*|*扫微信*|*用微信*)
+            printf 'pay:wechat\n'
+            return
+            ;;
+        *alipay*|*支付宝*|*支付寶*|*扫支付宝*|*用支付宝*)
+            printf 'pay:alipay\n'
+            return
+            ;;
     esac
     printf '\n'
 }
@@ -139,8 +155,16 @@ strip_wake_word() {
 
 local_cart_reply() {
     case "$1" in
-        checkout)
-            printf '%s\n' "好的，正在为您结账。请看屏幕上的合计金额和支付二维码。"
+        checkout_pending)
+            printf '%s\n' "好的，正在为您结账。请选择微信还是支付宝。"
+            return 0
+            ;;
+        pay:wechat)
+            printf '%s\n' "好的，已为您打开微信收款码，请扫码支付。"
+            return 0
+            ;;
+        pay:alipay)
+            printf '%s\n' "好的，已为您打开支付宝收款码，请扫码支付。"
             return 0
             ;;
         clear)
@@ -428,8 +452,26 @@ is_retail_question() {
 run_open_chat_reply() {
     question="$1"
     [ -n "$question" ] || return 1
+    if [ -f "$PAYMENT_WAIT_FILE" ]; then
+        cart_cmd="$(voice_payment_method_command "$question")"
+        if [ -n "$cart_cmd" ]; then
+            rm -f "$PAYMENT_WAIT_FILE"
+            answer="$(local_cart_reply "$cart_cmd")" || return 1
+            echo "Retail command: $cart_cmd"
+            echo "Assistant: $answer"
+            write_voice_state "$question" "$answer" "$cart_cmd"
+            play_text_tts "$answer" || true
+            return 0
+        fi
+    fi
     cart_cmd="$(voice_cart_command "$question")"
     if [ -n "$cart_cmd" ]; then
+        if [ "$cart_cmd" = "checkout" ]; then
+            cart_cmd="checkout_pending"
+            : > "$PAYMENT_WAIT_FILE"
+        else
+            rm -f "$PAYMENT_WAIT_FILE"
+        fi
         answer="$(local_cart_reply "$cart_cmd")" || return 1
         echo "Retail command: $cart_cmd"
         echo "Assistant: $answer"

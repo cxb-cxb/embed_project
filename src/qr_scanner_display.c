@@ -59,7 +59,12 @@
 #define MAX_CART_ITEMS 16
 #define VOICE_STATE_FILE "/tmp/qsm_retail_voice_state"
 #define VOICE_HISTORY_LINES 4
-#define QR_REPEAT_ADD_COOLDOWN_MS 1800
+#define QR_REPEAT_ADD_COOLDOWN_MS 800
+#define PAYMENT_QR_W 360
+#define PAYMENT_QR_H 480
+#define PAYMENT_POPUP_MS 30000
+#define PAYMENT_WECHAT_BGRA "/userdata/Embed_project/assets/payment_wechat.bgra"
+#define PAYMENT_ALIPAY_BGRA "/userdata/Embed_project/assets/payment_alipay.bgra"
 
 /* ── 全局变量 ────────────────────────────────────────────────────── */
 
@@ -95,6 +100,10 @@ static int            g_last_total_cents = 0;
 static char           g_order_id[48] = "ORDER: pending";
 static char           g_payment_url[160] = "PAY: scan checkout";
 static int            g_checkout_requested = 0;
+static char           g_payment_method[16] = "";
+static int64_t        g_payment_popup_until_ms = 0;
+static uint32_t      *g_payment_wechat_bgra = NULL;
+static uint32_t      *g_payment_alipay_bgra = NULL;
 static time_t         g_voice_state_mtime = 0;
 static char           g_voice_question[160] = "等待唤醒词";
 static char           g_voice_answer[160] = "请说小智小智后提问";
@@ -576,6 +585,58 @@ static void blit_icon_rgb(uint32_t *fb, int fw, int fh,
     }
 }
 
+static int load_bgra_asset(const char *path, uint32_t **out, int w, int h)
+{
+    FILE *fp;
+    size_t pixels = (size_t)w * (size_t)h;
+    size_t got;
+    if (!path || !out) return -1;
+    *out = (uint32_t *)malloc(pixels * sizeof(uint32_t));
+    if (!*out) return -1;
+    fp = fopen(path, "rb");
+    if (!fp) {
+        free(*out);
+        *out = NULL;
+        return -1;
+    }
+    got = fread(*out, sizeof(uint32_t), pixels, fp);
+    fclose(fp);
+    if (got != pixels) {
+        free(*out);
+        *out = NULL;
+        return -1;
+    }
+    return 0;
+}
+
+static void load_payment_qr_assets(void)
+{
+    if (!g_payment_wechat_bgra) {
+        load_bgra_asset(PAYMENT_WECHAT_BGRA, &g_payment_wechat_bgra,
+                        PAYMENT_QR_W, PAYMENT_QR_H);
+    }
+    if (!g_payment_alipay_bgra) {
+        load_bgra_asset(PAYMENT_ALIPAY_BGRA, &g_payment_alipay_bgra,
+                        PAYMENT_QR_W, PAYMENT_QR_H);
+    }
+}
+
+static void blit_bgra_rgb(uint32_t *fb, int fw, int fh,
+                          int x, int y, int w, int h,
+                          const uint32_t *pixels)
+{
+    if (!pixels) return;
+    for (int row = 0; row < h; row++) {
+        int yy = y + row;
+        if (yy < 0 || yy >= fh) continue;
+        for (int col = 0; col < w; col++) {
+            int xx = x + col;
+            if (xx < 0 || xx >= fw) continue;
+            fb[yy * fw + xx] = pixels[row * w + col];
+        }
+    }
+}
+
 static void draw_circle_rgb(uint32_t *fb, int fw, int fh,
                             int cx, int cy, int r, uint32_t color)
 {
@@ -785,13 +846,15 @@ static void text_from_line(char *out, size_t out_sz, const char *line, const cha
 
 static void retail_create_payment_order(void);
 static void retail_push_voice_history(const char *line);
+static void retail_hide_payment_popup(void);
+static void retail_show_payment_popup(const char *method);
 
 static void retail_apply_voice_cart_command(const char *cmd)
 {
     if (!cmd || !cmd[0]) return;
     if (equals_ignore_case(cmd, "clear")) {
         retail_cart_clear();
-        g_checkout_requested = 0;
+        retail_hide_payment_popup();
         return;
     }
     if (equals_ignore_case(cmd, "checkout")) {
@@ -806,10 +869,31 @@ static void retail_apply_voice_cart_command(const char *cmd)
         retail_push_voice_history(g_voice_answer);
         return;
     }
+    if (equals_ignore_case(cmd, "checkout_pending")) {
+        g_checkout_requested = 1;
+        g_last_total_cents = retail_cart_total_cents();
+        retail_create_payment_order();
+        g_payment_method[0] = '\0';
+        g_payment_popup_until_ms = 0;
+        snprintf(g_voice_question, sizeof(g_voice_question), "CHECKOUT");
+        snprintf(g_voice_answer, sizeof(g_voice_answer), "请选择微信还是支付宝");
+        retail_push_voice_history(g_voice_question);
+        retail_push_voice_history(g_voice_answer);
+        return;
+    }
+    if (equals_ignore_case(cmd, "pay:wechat")) {
+        retail_show_payment_popup("wechat");
+        return;
+    }
+    if (equals_ignore_case(cmd, "pay:alipay")) {
+        retail_show_payment_popup("alipay");
+        return;
+    }
     if (strncmp(cmd, "add:", 4) == 0) {
         const struct retail_product *product = retail_product_from_payload(cmd + 4);
         retail_cart_add_product(product);
         g_checkout_requested = 0;
+        retail_hide_payment_popup();
     }
 }
 
@@ -894,6 +978,27 @@ static void retail_create_payment_order(void)
     snprintf(g_order_id, sizeof(g_order_id), "ORDER:QSM%04u", g_order_seq);
     snprintf(g_payment_url, sizeof(g_payment_url), "order=QSM%04u&amount=%d",
              g_order_seq, g_last_total_cents);
+}
+
+static void retail_hide_payment_popup(void)
+{
+    g_payment_method[0] = '\0';
+    g_payment_popup_until_ms = 0;
+    g_checkout_requested = 0;
+}
+
+static void retail_show_payment_popup(const char *method)
+{
+    if (!method || !method[0]) return;
+    if (g_last_total_cents <= 0) {
+        g_last_total_cents = retail_cart_total_cents();
+    }
+    if (g_order_seq == 0 || !g_checkout_requested) {
+        retail_create_payment_order();
+    }
+    g_checkout_requested = 1;
+    snprintf(g_payment_method, sizeof(g_payment_method), "%s", method);
+    g_payment_popup_until_ms = now_ms() + PAYMENT_POPUP_MS;
 }
 
 static void dashboard_layout(int *cam_x, int *cam_y, int *cam_w, int *cam_h,
@@ -1106,6 +1211,50 @@ static void draw_payment_panel(int x, int y, int w, int h, unsigned int qr_count
     draw_text_utf8_rgb(fb, fw, fh, bx + 70, y + 30, "微信支付", 1, 0xFFFFFFFF);
     draw_text_utf8_rgb(fb, fw, fh, bx + 82, y + 76, "支付宝", 1, 0xFFFFFFFF);
     draw_text_utf8_rgb(fb, fw, fh, bx + 58, y + 122, "银联云闪付", 1, 0xFFFFFFFF);
+}
+
+static void draw_payment_popup(void)
+{
+    uint32_t *fb = (uint32_t *)g_ui_map;
+    int fw = g_ui_w;
+    int fh = g_ui_h;
+    char amount[24];
+    int panel_w = PAYMENT_QR_W + 88;
+    int panel_h = PAYMENT_QR_H + 150;
+    int panel_x = (fw - panel_w) / 2;
+    int panel_y = (fh - panel_h) / 2;
+    int qr_x = panel_x + 44;
+    int qr_y = panel_y + 76;
+    int remain = (int)((g_payment_popup_until_ms - now_ms() + 999) / 1000);
+    uint32_t theme = equals_ignore_case(g_payment_method, "alipay") ? 0xFF1677FF : 0xFF07C160;
+    const uint32_t *qr = equals_ignore_case(g_payment_method, "alipay") ?
+                         g_payment_alipay_bgra : g_payment_wechat_bgra;
+    const char *title = equals_ignore_case(g_payment_method, "alipay") ?
+                        "支付宝收款码" : "微信收款码";
+
+    if (remain < 0) remain = 0;
+    money_text(g_last_total_cents, amount, sizeof(amount));
+    fill_rect_rgb(fb, fw, fh, 0, 0, fw, fh, 0xEE071018);
+    fill_rect_rgb(fb, fw, fh, panel_x, panel_y, panel_w, panel_h, 0xFFFFFFFF);
+    draw_rect_rgb(fb, fw, fh, panel_x, panel_y, panel_w, panel_h, theme, 6);
+    fill_rect_rgb(fb, fw, fh, panel_x, panel_y, panel_w, 58, theme);
+    draw_text_utf8_rgb(fb, fw, fh, panel_x + 36, panel_y + 18, title, 1, 0xFFFFFFFF);
+    draw_text_rgb(fb, fw, fh, panel_x + panel_w - 150, panel_y + 16, amount, 3, 0xFFFFFFFF);
+    draw_text_utf8_rgb(fb, fw, fh, panel_x + panel_w - 58, panel_y + 22, "元", 1, 0xFFFFFFFF);
+
+    if (qr) {
+        blit_bgra_rgb(fb, fw, fh, qr_x, qr_y, PAYMENT_QR_W, PAYMENT_QR_H, qr);
+    } else {
+        fill_rect_rgb(fb, fw, fh, qr_x, qr_y, PAYMENT_QR_W, PAYMENT_QR_H, 0xFFF4F7F9);
+        draw_rect_rgb(fb, fw, fh, qr_x, qr_y, PAYMENT_QR_W, PAYMENT_QR_H, 0xFF8899AA, 2);
+        draw_text_rgb(fb, fw, fh, qr_x + 42, qr_y + 220, "PAYMENT QR MISSING", 2, 0xFF111111);
+    }
+    draw_text_utf8_rgb(fb, fw, fh, panel_x + 56, panel_y + panel_h - 52,
+                       "请扫码完成支付，30秒后自动返回", 1, 0xFF111111);
+    char remain_text[32];
+    snprintf(remain_text, sizeof(remain_text), "%02dS", remain);
+    draw_text_rgb(fb, fw, fh, panel_x + panel_w - 96, panel_y + panel_h - 58,
+                  remain_text, 3, theme);
 }
 
 static void draw_voice_history_panel(uint32_t *fb, int fw, int fh,
@@ -1540,6 +1689,10 @@ static void drm_display_cleanup(void)
     }
     if (g_drm_fd >= 0) close(g_drm_fd);
     g_drm_fd = -1;
+    free(g_payment_wechat_bgra);
+    free(g_payment_alipay_bgra);
+    g_payment_wechat_bgra = NULL;
+    g_payment_alipay_bgra = NULL;
 }
 
 /* ── 摄像头操作 ──────────────────────────────────────────────────── */
@@ -1729,6 +1882,9 @@ int main(int argc, char **argv)
         have_display = 0;
         display_name = "OFF";
     }
+    if (have_display) {
+        load_payment_qr_assets();
+    }
     if (camera_stream_on() < 0) return 1;
 
     printf("\n[scanner] %ux%u | display:%s | quirc QR\n"
@@ -1753,6 +1909,10 @@ int main(int argc, char **argv)
         }
         frame++;
         if (retail_apply_voice_state()) {
+            redraw_dashboard = 1;
+        }
+        if (g_payment_popup_until_ms > 0 && now_ms() >= g_payment_popup_until_ms) {
+            retail_hide_payment_popup();
             redraw_dashboard = 1;
         }
 
@@ -1780,6 +1940,9 @@ int main(int argc, char **argv)
                                      g_ui_pitch,
                                      cam_view_x, cam_view_y,
                                      cam_view_w, cam_view_h);
+            if (g_payment_popup_until_ms > 0 && g_payment_method[0]) {
+                draw_payment_popup();
+            }
         }
 
         /* QR 检测 */
