@@ -128,6 +128,9 @@ class VoiceAutoListenScriptTest(unittest.TestCase):
         self.assertIn("WAKE_ACK_TEXT", text)
         self.assertIn("play_wake_ack", text)
         self.assertIn("Wake word detected", text)
+        self.assertIn("Retail command detected without wake word.", text)
+        self.assertIn('voice_cart_command "$wake_text"', text)
+        self.assertIn('voice_payment_method_command "$wake_text"', text)
         self.assertIn("run_voice_question_once", text)
 
     def test_voiceask_uses_cached_wake_ack_and_two_minute_session(self):

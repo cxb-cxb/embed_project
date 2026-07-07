@@ -557,6 +557,13 @@ run_wake_once() {
 
     echo "Wake candidate: $wake_text"
     if ! is_wake_text "$wake_text"; then
+        if [ -n "$(voice_payment_method_command "$wake_text")" ] ||
+           [ -n "$(voice_cart_command "$wake_text")" ]; then
+            echo "Retail command detected without wake word."
+            run_open_chat_reply "$wake_text" || true
+            run_active_session
+            return 0
+        fi
         echo "Wake word not detected."
         return 0
     fi
