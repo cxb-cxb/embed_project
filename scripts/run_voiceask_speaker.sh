@@ -345,8 +345,22 @@ play_welcome() {
     play_mp3 "$WELCOME_MP3" || true
 }
 
+play_wake_beep() {
+    beep="${VOICE_WAKE_BEEP_WAV:-/tmp/qsm_voice_wake_beep.wav}"
+    prepare_speaker
+    if command -v sox >/dev/null 2>&1; then
+        sox -n -r 48000 -b 16 -c 2 "$beep" synth 0.18 sine 1200 gain -4 >/dev/null 2>&1 || true
+    fi
+    if [ -s "$beep" ]; then
+        tinyplay "$beep" -D 0 -d 0 >/dev/null 2>&1 || aplay -D hw:0,0 "$beep" >/dev/null 2>&1 || true
+    else
+        printf '\a'
+    fi
+}
+
 run_embed_command() {
     cmd="$1"
+    mode="${2:-normal}"
     log="/tmp/embed_project_voiceask.log"
     require_wake=0
     rm -f /tmp/embed_tts_response.json /tmp/embed_tts_audio.b64 /tmp/embed_tts_reply.mp3 \
@@ -357,9 +371,16 @@ run_embed_command() {
     case "$cmd" in
         voiceask*)
             require_wake=1
+            [ "$mode" = "no_wake" ] && require_wake=0
             ensure_dns
             prepare_mic
-            echo "请先说唤醒词“小智小智”，再提出问题。录音 ${VOICE_SECONDS:-8} 秒..."
+            if [ "$mode" = "wake_only" ]; then
+                echo "请说唤醒词“小智小智”。录音 ${VOICE_WAKE_SECONDS:-3} 秒..."
+            elif [ "$require_wake" -eq 1 ]; then
+                echo "请先说唤醒词“小智小智”，再提出问题。录音 ${VOICE_SECONDS:-8} 秒..."
+            else
+                echo "请开始提问。录音 ${VOICE_SECONDS:-8} 秒..."
+            fi
             ;;
     esac
 
@@ -371,16 +392,22 @@ run_embed_command() {
 
     if [ -z "$question" ]; then
         echo "未识别到有效语音，请靠近麦克风后重试。"
-        return
+        return 1
     fi
 
     if [ "$require_wake" -eq 1 ]; then
         if ! contains_wake_word "$question"; then
             echo "已听到语音，但未检测到唤醒词“小智小智”，本次不回复。"
-            return
+            return 1
         fi
         question="$(strip_wake_word "$question")"
         [ -n "$question" ] || question="请问有什么可以帮您？"
+    fi
+
+    if [ "$mode" = "wake_only" ]; then
+        echo "唤醒成功，请听到提示音后再提问。"
+        printf '%s\n' "$question" > /tmp/qsm_last_wake_text
+        return 0
     fi
 
     if [ -n "$question" ] && run_open_chat_reply "$question"; then
@@ -423,7 +450,11 @@ prepare_speaker
 case "${1:-}" in
     --once)
         seconds="${2:-${VOICE_SECONDS:-8}}"
-        run_embed_command "voiceask $seconds"
+        wake_seconds="${VOICE_WAKE_SECONDS:-3}"
+        if run_embed_command "voiceask $wake_seconds" wake_only; then
+            play_wake_beep
+            run_embed_command "voiceask $seconds" no_wake
+        fi
         exit 0
         ;;
     '')

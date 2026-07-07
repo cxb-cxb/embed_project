@@ -48,13 +48,17 @@ play_cached_welcome() {
 
 echo "Auto voice listener is starting. Wake word: 小智小智."
 prepare_audio
-play_ready_beep
-play_cached_welcome
+if [ "${SKIP_BEEP:-1}" != "1" ]; then
+    play_ready_beep
+fi
+if [ "${SKIP_WELCOME:-1}" != "1" ]; then
+    play_cached_welcome
+fi
 
 echo "Auto voice listener is running. Say 小智小智 before each question. Press Ctrl+C to stop."
 
 while true; do
-    prepare_audio
+    amixer -c 0 cset numid=2 "${VOICE_MIC_PATH:-1}" >/dev/null 2>&1 || true
     "$PROJECT_DIR/scripts/run_voiceask_speaker.sh" --once "${VOICE_SECONDS:-8}" || true
     sleep "${VOICE_LOOP_PAUSE_SECONDS:-1}"
 done
