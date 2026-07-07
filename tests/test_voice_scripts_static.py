@@ -75,6 +75,9 @@ class VoiceAutoListenScriptTest(unittest.TestCase):
 
         text = script.read_text(encoding="utf-8", errors="ignore")
         self.assertIn("local_cart_reply()", text)
+        self.assertIn("play_text_tts_maybe_async()", text)
+        self.assertIn("VOICE_TTS_ASYNC", text)
+        self.assertIn("VOICE_RETAIL_TTS", text)
         self.assertIn("cart_cmd=\"$(voice_cart_command \"$question\")\"", text)
         cart_pos = text.index("cart_cmd=\"$(voice_cart_command \"$question\")\"")
         open_pos = text.index("answer=\"$(request_open_chat")
@@ -171,8 +174,10 @@ class VoiceAutoListenScriptTest(unittest.TestCase):
         self.assertIn("export VOICE_GAIN_DB=1", text)
         self.assertIn("export VOICE_SECONDS=4", text)
         self.assertIn("export VOICE_WAKE_SECONDS=2", text)
-        self.assertIn("export VOICE_COMMAND_SECONDS=5", text)
+        self.assertIn("export VOICE_COMMAND_SECONDS=4", text)
         self.assertIn("export VOICE_SESSION_SECONDS=60", text)
+        self.assertIn("export VOICE_TTS_ASYNC=1", text)
+        self.assertIn("export VOICE_RETAIL_TTS=0", text)
         self.assertIn('export WAKE_ACK_TEXT="我在"', text)
 
 

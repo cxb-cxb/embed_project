@@ -357,6 +357,18 @@ play_text_tts() {
     play_mp3 "$mp3"
 }
 
+play_text_tts_maybe_async() {
+    text="$1"
+    if [ "${VOICE_RETAIL_TTS:-0}" = "0" ]; then
+        return 0
+    fi
+    if [ "${VOICE_TTS_ASYNC:-1}" = "1" ]; then
+        ( play_text_tts "$text" >/tmp/qsm_async_tts.log 2>&1 || true ) &
+    else
+        play_text_tts "$text" || true
+    fi
+}
+
 build_wake_ack_audio() {
     mkdir -p "$CACHE_DIR"
     raw="/tmp/embed_tts_wake_ack_response.http"
@@ -467,7 +479,7 @@ run_open_chat_reply() {
         echo "Retail command: $cart_cmd"
         echo "Assistant: $answer"
         write_voice_state "$question" "$answer" "$cart_cmd"
-        play_text_tts "$answer" || true
+        play_text_tts_maybe_async "$answer"
         return 0
     fi
     if [ -f "$PAYMENT_WAIT_FILE" ]; then
@@ -478,7 +490,7 @@ run_open_chat_reply() {
             echo "Retail command: $cart_cmd"
             echo "Assistant: $answer"
             write_voice_state "$question" "$answer" "$cart_cmd"
-            play_text_tts "$answer" || true
+            play_text_tts_maybe_async "$answer"
             return 0
         fi
     fi
@@ -494,7 +506,7 @@ run_open_chat_reply() {
         echo "Retail command: $cart_cmd"
         echo "Assistant: $answer"
         write_voice_state "$question" "$answer" "$cart_cmd"
-        play_text_tts "$answer" || true
+        play_text_tts_maybe_async "$answer"
         return 0
     fi
     echo "Open chat question: $question"
