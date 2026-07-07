@@ -16,6 +16,8 @@ class VoiceAutoListenScriptTest(unittest.TestCase):
         self.assertIn("configure_board_voice_speaker.sh", text)
         self.assertIn("/tmp/qsm_auto_voice.log", text)
         self.assertIn("/tmp/qsm_auto_voice.pid", text)
+        self.assertIn("/tmp/qsm_retail_voice_state", text)
+        self.assertIn("/tmp/qsm_payment_waiting_method", text)
         self.assertIn("run_mission is ready", text)
         self.assertIn('sh "$SCRIPT_DIR/configure_board_voice_speaker.sh"', text)
         self.assertIn('sh "$SCRIPT_DIR/start_retail_lvds_ui.sh"', text)

@@ -5,11 +5,14 @@ PROJECT_DIR="/userdata/Embed_project"
 SCRIPT_DIR="$PROJECT_DIR/scripts"
 VOICE_LOG="/tmp/qsm_auto_voice.log"
 VOICE_PID="/tmp/qsm_auto_voice.pid"
+VOICE_STATE="/tmp/qsm_retail_voice_state"
+PAYMENT_WAIT="/tmp/qsm_payment_waiting_method"
 
 cd "$PROJECT_DIR"
 
 echo "[mission] stopping old voice processes..."
 killall start_voice_auto_listen.sh run_voiceask_speaker.sh embed_project arecord tinyplay aplay mpg123 2>/dev/null || true
+rm -f "$VOICE_STATE" "$PAYMENT_WAIT"
 
 echo "[mission] applying speaker and microphone config..."
 if [ -f "$SCRIPT_DIR/configure_board_voice_speaker.sh" ]; then
