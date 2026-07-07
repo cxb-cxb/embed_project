@@ -17,7 +17,9 @@ WAKE_ACK_TEXT="${WAKE_ACK_TEXT:-我在}"
 
 if [ -f "$ASR_ENV" ]; then
     # shellcheck disable=SC1090
+    set -a
     . "$ASR_ENV"
+    set +a
 fi
 
 trap 'echo; echo "Voice assistant stopped."; exit 0' INT TERM
