@@ -5,11 +5,27 @@ PROJECT_DIR="/userdata/Embed_project"
 SCRIPT_DIR="$PROJECT_DIR/scripts"
 VOICE_LOG="/tmp/qsm_auto_voice.log"
 VOICE_PID="/tmp/qsm_auto_voice.pid"
+VOICE_LOCK_DIR="/tmp/qsm_auto_voice.lock"
 
 cd "$PROJECT_DIR"
 
 echo "[mission] stopping old voice processes..."
-killall start_voice_auto_listen.sh run_voiceask_speaker.sh embed_project arecord tinyplay aplay mpg123 2>/dev/null || true
+if [ -f "$VOICE_PID" ]; then
+    old_pid="$(cat "$VOICE_PID" 2>/dev/null || true)"
+    if [ -n "$old_pid" ]; then
+        kill "$old_pid" 2>/dev/null || true
+    fi
+fi
+pkill -f "scripts/start_voice_auto_listen.sh" 2>/dev/null || true
+pkill -f "scripts/run_voiceask_speaker.sh" 2>/dev/null || true
+pkill -f "/userdata/Embed_project/bin/embed_project" 2>/dev/null || true
+pkill -f "tinycap" 2>/dev/null || true
+pkill -f "tinyplay" 2>/dev/null || true
+pkill -f "aplay" 2>/dev/null || true
+pkill -f "mpg123" 2>/dev/null || true
+sleep 1
+rm -f "$VOICE_LOCK_DIR/pid"
+rmdir "$VOICE_LOCK_DIR" 2>/dev/null || true
 
 echo "[mission] applying speaker and microphone config..."
 if [ -x "$SCRIPT_DIR/configure_board_voice_speaker.sh" ]; then

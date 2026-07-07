@@ -18,6 +18,27 @@ class VoiceAutoListenScriptTest(unittest.TestCase):
         self.assertIn("/tmp/qsm_auto_voice.pid", text)
         self.assertIn("run_mission is ready", text)
 
+    def test_run_mission_stops_previous_shell_script_listeners_by_command_line(self):
+        script = ROOT / "scripts" / "run_mission.sh"
+        self.assertTrue(script.exists())
+
+        text = script.read_text(encoding="utf-8", errors="ignore")
+        self.assertIn("pkill -f", text)
+        self.assertIn("scripts/start_voice_auto_listen.sh", text)
+        self.assertIn("scripts/run_voiceask_speaker.sh", text)
+        self.assertIn("tinycap", text)
+        self.assertNotIn("killall start_voice_auto_listen.sh", text)
+
+    def test_auto_listen_has_single_instance_lock(self):
+        script = ROOT / "scripts" / "start_voice_auto_listen.sh"
+        self.assertTrue(script.exists())
+
+        text = script.read_text(encoding="utf-8", errors="ignore")
+        self.assertIn("LOCK_DIR=", text)
+        self.assertIn("mkdir \"$LOCK_DIR\"", text)
+        self.assertIn("another auto voice listener is already running", text)
+        self.assertIn("rmdir \"$LOCK_DIR\"", text)
+
     def test_auto_listen_script_runs_voiceask_without_read_prompt(self):
         script = ROOT / "scripts" / "start_voice_auto_listen.sh"
         self.assertTrue(script.exists())

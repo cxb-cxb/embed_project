@@ -5,6 +5,7 @@ PROJECT_DIR="/userdata/Embed_project"
 ENV_FILE="$PROJECT_DIR/config/voice_asr.env"
 BEEP_WAV="/tmp/qsm_voice_ready_beep.wav"
 WELCOME_MP3="$PROJECT_DIR/cache/welcome_tts.mp3"
+LOCK_DIR="${VOICE_LOCK_DIR:-/tmp/qsm_auto_voice.lock}"
 
 if [ -f "$ENV_FILE" ]; then
     # shellcheck disable=SC1090
@@ -16,7 +17,22 @@ VOICE_COMMAND_SECONDS="${VOICE_COMMAND_SECONDS:-5}"
 VOICE_SESSION_SECONDS="${VOICE_SESSION_SECONDS:-60}"
 WAKE_ACK_TEXT="${WAKE_ACK_TEXT:-我在}"
 
-trap 'echo; echo "Auto voice listener stopped."; exit 0' INT TERM
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+    echo "another auto voice listener is already running"
+    if [ -f "$LOCK_DIR/pid" ]; then
+        echo "existing listener pid=$(cat "$LOCK_DIR/pid" 2>/dev/null || echo unknown)"
+    fi
+    exit 0
+fi
+printf '%s\n' "$$" > "$LOCK_DIR/pid"
+
+cleanup_lock() {
+    rm -f "$LOCK_DIR/pid"
+    rmdir "$LOCK_DIR" 2>/dev/null || true
+}
+
+trap 'echo; echo "Auto voice listener stopped."; cleanup_lock; exit 0' INT TERM
+trap 'cleanup_lock' EXIT
 
 prepare_audio() {
     amixer -c 0 cset numid=1 "${VOICE_PLAYBACK_PATH:-3}" >/dev/null 2>&1 || true
