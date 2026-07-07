@@ -49,16 +49,16 @@ voice_cart_command() {
             ;;
     esac
     case "$q" in
-        *add*cola*|*buy*cola*|*scan*cola*|*加入*可乐*|*买*可乐*) printf 'add:cola\n'; return ;;
-        *add*milk*|*buy*milk*|*scan*milk*|*加入*牛奶*|*买*牛奶*) printf 'add:milk\n'; return ;;
-        *add*water*|*buy*water*|*scan*water*|*加入*水*|*买*水*) printf 'add:water\n'; return ;;
-        *add*bread*|*buy*bread*|*scan*bread*|*加入*面包*|*买*面包*) printf 'add:bread\n'; return ;;
-        *add*noodle*|*buy*noodle*|*scan*noodle*|*加入*泡面*|*买*泡面*) printf 'add:noodle\n'; return ;;
-        *add*chips*|*buy*chips*|*scan*chips*|*加入*薯片*|*买*薯片*) printf 'add:chips\n'; return ;;
-        *add*biscuit*|*buy*biscuit*|*scan*biscuit*|*加入*饼干*|*买*饼干*) printf 'add:biscuit\n'; return ;;
-        *add*toothpaste*|*buy*toothpaste*|*scan*toothpaste*|*加入*牙膏*|*买*牙膏*) printf 'add:toothpaste\n'; return ;;
-        *add*tissue*|*buy*tissue*|*scan*tissue*|*加入*纸巾*|*买*纸巾*) printf 'add:tissue\n'; return ;;
-        *add*soap*|*buy*soap*|*scan*soap*|*加入*香皂*|*买*香皂*) printf 'add:soap\n'; return ;;
+        *add*cola*|*buy*cola*|*scan*cola*|*加入*可乐*|*买*可乐*|*我要*可乐*|*来个*可乐*|*拿一瓶*可乐*|*加一瓶*可乐*|*可乐*加入购物车*) printf 'add:cola\n'; return ;;
+        *add*milk*|*buy*milk*|*scan*milk*|*加入*牛奶*|*买*牛奶*|*我要*牛奶*|*来个*牛奶*|*拿一瓶*牛奶*|*加一瓶*牛奶*|*牛奶*加入购物车*) printf 'add:milk\n'; return ;;
+        *add*water*|*buy*water*|*scan*water*|*加入*矿泉水*|*加入*水*|*买*矿泉水*|*买*水*|*我要*矿泉水*|*我要*水*|*来个*矿泉水*|*来个*水*|*拿一瓶*矿泉水*|*拿一瓶*水*|*加一瓶*矿泉水*|*加一瓶*水*|*水*加入购物车*) printf 'add:water\n'; return ;;
+        *add*bread*|*buy*bread*|*scan*bread*|*加入*面包*|*买*面包*|*我要*面包*|*来个*面包*|*拿一个*面包*|*加一个*面包*|*面包*加入购物车*) printf 'add:bread\n'; return ;;
+        *add*noodle*|*buy*noodle*|*scan*noodle*|*加入*方便面*|*加入*泡面*|*买*方便面*|*买*泡面*|*我要*方便面*|*我要*泡面*|*来个*方便面*|*来个*泡面*|*加一桶*泡面*|*泡面*加入购物车*) printf 'add:noodle\n'; return ;;
+        *add*chips*|*buy*chips*|*scan*chips*|*加入*薯片*|*买*薯片*|*我要*薯片*|*来个*薯片*|*拿一包*薯片*|*加一包*薯片*|*来一袋*薯片*|*薯片*加入购物车*) printf 'add:chips\n'; return ;;
+        *add*biscuit*|*buy*biscuit*|*scan*biscuit*|*加入*饼干*|*买*饼干*|*我要*饼干*|*来个*饼干*|*拿一包*饼干*|*加一包*饼干*|*来一袋*饼干*|*饼干*加入购物车*) printf 'add:biscuit\n'; return ;;
+        *add*toothpaste*|*buy*toothpaste*|*scan*toothpaste*|*加入*牙膏*|*买*牙膏*|*我要*牙膏*|*来个*牙膏*|*拿一支*牙膏*|*加一支*牙膏*|*牙膏*加入购物车*) printf 'add:toothpaste\n'; return ;;
+        *add*tissue*|*buy*tissue*|*scan*tissue*|*加入*纸巾*|*买*纸巾*|*我要*纸巾*|*来个*纸巾*|*拿一包*纸巾*|*加一包*纸巾*|*来一袋*纸巾*|*纸巾*加入购物车*) printf 'add:tissue\n'; return ;;
+        *add*soap*|*buy*soap*|*scan*soap*|*加入*香皂*|*加入*肥皂*|*买*香皂*|*买*肥皂*|*我要*香皂*|*我要*肥皂*|*来个*香皂*|*来个*肥皂*|*拿一个*香皂*|*加一个*香皂*|*香皂*加入购物车*) printf 'add:soap\n'; return ;;
     esac
     printf '\n'
 }
@@ -185,6 +185,24 @@ local_cart_reply() {
             ;;
         *)
             return 1
+            ;;
+    esac
+}
+
+play_local_cart_reply() {
+    answer="$1"
+    mode="${VOICE_FAST_CART_REPLY:-async}"
+    case "$mode" in
+        0|off|sync)
+            play_text_tts "$answer" || true
+            ;;
+        skip|silent)
+            echo "Skipping cloud TTS for fast local cart reply."
+            ;;
+        async|1|on|*)
+            echo "Starting async local cart reply TTS."
+            nohup "$PROJECT_DIR/scripts/run_voiceask_speaker.sh" --speak-local-reply "$answer" \
+                >/tmp/qsm_local_cart_tts.log 2>&1 </dev/null &
             ;;
     esac
 }
@@ -467,7 +485,7 @@ run_open_chat_reply() {
         echo "Retail command: $cart_cmd"
         echo "Assistant: $answer"
         write_voice_state "$question" "$answer" "$cart_cmd"
-        play_text_tts "$answer" || true
+        play_local_cart_reply "$answer" || true
         return 0
     fi
     if [ -f "$PAYMENT_WAIT_FILE" ]; then
@@ -478,7 +496,7 @@ run_open_chat_reply() {
             echo "Retail command: $cart_cmd"
             echo "Assistant: $answer"
             write_voice_state "$question" "$answer" "$cart_cmd"
-            play_text_tts "$answer" || true
+            play_local_cart_reply "$answer" || true
             return 0
         fi
     fi
@@ -494,7 +512,7 @@ run_open_chat_reply() {
         echo "Retail command: $cart_cmd"
         echo "Assistant: $answer"
         write_voice_state "$question" "$answer" "$cart_cmd"
-        play_text_tts "$answer" || true
+        play_local_cart_reply "$answer" || true
         return 0
     fi
     echo "Open chat question: $question"
@@ -710,6 +728,11 @@ ensure_network
 prepare_speaker
 
 case "${1:-}" in
+    --speak-local-reply)
+        shift
+        play_text_tts "$*" || true
+        exit 0
+        ;;
     --prepare-cache)
         build_wake_ack_audio || true
         exit 0

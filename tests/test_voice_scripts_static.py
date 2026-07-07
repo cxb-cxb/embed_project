@@ -90,6 +90,50 @@ class VoiceAutoListenScriptTest(unittest.TestCase):
         self.assertIn("支付", text)
         self.assertIn("买单", text)
 
+    def test_voice_add_to_cart_keywords_cover_natural_chinese_requests(self):
+        script = ROOT / "scripts" / "run_voiceask_speaker.sh"
+        self.assertTrue(script.exists())
+
+        text = script.read_text(encoding="utf-8", errors="ignore")
+        for keyword in [
+            "加入购物车",
+            "加一瓶",
+            "加一包",
+            "我要",
+            "来个",
+            "拿一瓶",
+            "来一袋",
+        ]:
+            with self.subTest(keyword=keyword):
+                self.assertIn(keyword, text)
+        for command in [
+            "add:cola",
+            "add:milk",
+            "add:water",
+            "add:bread",
+            "add:noodle",
+            "add:chips",
+            "add:biscuit",
+            "add:toothpaste",
+            "add:tissue",
+            "add:soap",
+        ]:
+            with self.subTest(command=command):
+                self.assertIn(command, text)
+
+    def test_local_cart_commands_use_fast_reply_path(self):
+        script = ROOT / "scripts" / "run_voiceask_speaker.sh"
+        self.assertTrue(script.exists())
+
+        text = script.read_text(encoding="utf-8", errors="ignore")
+        self.assertIn("play_local_cart_reply()", text)
+        self.assertIn("VOICE_FAST_CART_REPLY", text)
+        self.assertIn('play_local_cart_reply "$answer" || true', text)
+        self.assertIn("Starting async local cart reply TTS.", text)
+        self.assertIn("--speak-local-reply", text)
+        self.assertIn("nohup", text)
+        self.assertIn("/tmp/qsm_local_cart_tts.log", text)
+
     def test_cart_commands_bypass_open_chat(self):
         script = ROOT / "scripts" / "run_voiceask_speaker.sh"
         self.assertTrue(script.exists())
