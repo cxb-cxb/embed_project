@@ -172,6 +172,24 @@ class VoiceAutoListenScriptTest(unittest.TestCase):
             with self.subTest(keyword=keyword):
                 self.assertIn(keyword, text)
 
+    def test_payment_reply_echo_does_not_retrigger_payment_loop(self):
+        script = ROOT / "scripts" / "run_voiceask_speaker.sh"
+        self.assertTrue(script.exists())
+
+        text = script.read_text(encoding="utf-8", errors="ignore")
+        self.assertIn("is_payment_reply_echo()", text)
+        self.assertIn('if is_payment_reply_echo "$question"; then', text)
+        self.assertIn("Ignoring payment reply echo.", text)
+
+        echo_pos = text.index('if is_payment_reply_echo "$question"; then')
+        payment_pos = text.index('cart_cmd="$(voice_payment_method_command "$question")"')
+        self.assertLess(echo_pos, payment_pos)
+
+        retail_pos = text.index('echo "Retail command detected without wake word."')
+        retail_block = text[retail_pos: retail_pos + 220]
+        self.assertIn('run_open_chat_reply "$wake_text" || true', retail_block)
+        self.assertNotIn("run_active_session", retail_block)
+
     def test_voice_state_keeps_utf8_chinese_for_ui(self):
         script = ROOT / "scripts" / "run_voiceask_speaker.sh"
         self.assertTrue(script.exists())

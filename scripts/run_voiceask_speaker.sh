@@ -82,6 +82,22 @@ voice_payment_method_command() {
     printf '\n'
 }
 
+is_payment_reply_echo() {
+    q="$(printf '%s' "$1" | tr 'A-Z' 'a-z')"
+    case "$q" in
+        *好的*已为您打开*|*好的*已为你打开*|*已为您打开*收款码*|*已为你打开*收款码*|\
+        *请扫码支付*)
+            return 0
+            ;;
+        *濂界殑*|*宸蹭负鎮ㄦ墦寮*|*璇锋壂鐮佹敮浠*)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 is_wake_text() {
     q="$(printf '%s' "$1" | tr 'A-Z' 'a-z')"
     case "$q" in
@@ -478,6 +494,10 @@ is_retail_question() {
 run_open_chat_reply() {
     question="$1"
     [ -n "$question" ] || return 1
+    if is_payment_reply_echo "$question"; then
+        echo "Ignoring payment reply echo."
+        return 0
+    fi
     cart_cmd="$(voice_payment_method_command "$question")"
     if [ -n "$cart_cmd" ]; then
         rm -f "$PAYMENT_WAIT_FILE"
@@ -579,7 +599,6 @@ run_wake_once() {
            [ -n "$(voice_cart_command "$wake_text")" ]; then
             echo "Retail command detected without wake word."
             run_open_chat_reply "$wake_text" || true
-            run_active_session
             return 0
         fi
         echo "Wake word not detected."

@@ -226,6 +226,44 @@ class QrDisplayStaticTests(unittest.TestCase):
             with self.subTest(symbol=symbol):
                 self.assertIn(symbol, code)
 
+    def test_payment_popup_timeout_resets_checkout_and_cart_after_one_minute(self):
+        code = SRC.read_text(encoding="utf-8", errors="ignore")
+
+        self.assertIn("#define PAYMENT_POPUP_MS 60000", code)
+        self.assertIn("retail_finish_payment_and_reset();", code)
+
+        timeout_pos = code.index("if (g_payment_popup_until_ms > 0 && now_ms() >= g_payment_popup_until_ms)")
+        timeout_block = code[timeout_pos: timeout_pos + 260]
+        self.assertIn("retail_finish_payment_and_reset();", timeout_block)
+        self.assertIn("redraw_dashboard = 1;", timeout_block)
+
+        reset_pos = code.index("static void retail_finish_payment_and_reset(void)\n{")
+        reset_block = code[reset_pos: reset_pos + 900]
+        self.assertIn("retail_cart_clear();", reset_block)
+        self.assertIn("retail_hide_payment_popup();", reset_block)
+        self.assertIn("unlink(PAYMENT_WAIT_FILE);", reset_block)
+        self.assertIn("unlink(VOICE_STATE_FILE);", reset_block)
+        self.assertIn("g_checkout_requested = 0;", reset_block)
+        self.assertIn("g_last_total_cents = 0;", reset_block)
+        self.assertIn("\"PAY: scan checkout\"", reset_block)
+        self.assertIn("\"ORDER: pending\"", reset_block)
+
+    def test_voice_cart_commands_are_consumed_once(self):
+        code = SRC.read_text(encoding="utf-8", errors="ignore")
+
+        self.assertIn('#define PAYMENT_WAIT_FILE "/tmp/qsm_payment_waiting_method"', code)
+        self.assertIn("static void retail_consume_voice_state_command(void)\n{", code)
+
+        consume_pos = code.index("static void retail_consume_voice_state_command(void)\n{")
+        consume_block = code[consume_pos: consume_pos + 220]
+        self.assertIn("unlink(VOICE_STATE_FILE);", consume_block)
+        self.assertIn("g_voice_state_mtime = 0;", consume_block)
+
+        apply_pos = code.index("retail_apply_voice_cart_command(cart_cmd);")
+        apply_block = code[apply_pos: apply_pos + 180]
+        self.assertIn("if (cart_cmd[0])", apply_block)
+        self.assertIn("retail_consume_voice_state_command();", apply_block)
+
     def test_qr_repeat_add_cooldown_is_fast_for_checkout_demo(self):
         code = SRC.read_text(encoding="utf-8", errors="ignore")
         self.assertIn("#define QR_REPEAT_ADD_COOLDOWN_MS 800", code)
