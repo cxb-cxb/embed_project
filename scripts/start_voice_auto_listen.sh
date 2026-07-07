@@ -46,11 +46,12 @@ play_cached_welcome() {
     fi
 }
 
+echo "Auto voice listener is starting. Wake word: 小智小智."
 prepare_audio
 play_ready_beep
 play_cached_welcome
 
-echo "Auto voice listener is running. Speak after each Listening message. Press Ctrl+C to stop."
+echo "Auto voice listener is running. Say 小智小智 before each question. Press Ctrl+C to stop."
 
 while true; do
     prepare_audio

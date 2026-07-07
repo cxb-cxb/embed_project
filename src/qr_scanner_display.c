@@ -95,11 +95,11 @@ static int            g_last_total_cents = 0;
 static char           g_order_id[48] = "ORDER: pending";
 static char           g_payment_url[160] = "PAY: scan checkout";
 static time_t         g_voice_state_mtime = 0;
-static char           g_voice_question[160] = "Listening...";
-static char           g_voice_answer[160] = "Scan QR or speak to update cart.";
+static char           g_voice_question[160] = "等待唤醒词";
+static char           g_voice_answer[160] = "请说小智小智后提问";
 static char           g_voice_history[VOICE_HISTORY_LINES][96] = {
-    "SYSTEM READY",
-    "SCAN QR OR SPEAK",
+    "提示：请说小智小智",
+    "问答区等待刷新",
     "",
     ""
 };
@@ -500,6 +500,66 @@ static void draw_text_utf8_shadow_rgb(uint32_t *fb, int fw, int fh,
     draw_text_utf8_rgb(fb, fw, fh, x, y, text, scale, color);
 }
 
+static int utf8_codepoint_width(uint32_t cp, int scale)
+{
+    if (cp < 0x80) return 6 * scale;
+    if (!find_ui_glyph(cp)) return 13 * scale;
+    return (UI_GLYPH_W + 2) * scale;
+}
+
+static int draw_utf8_segment_rgb(uint32_t *fb, int fw, int fh,
+                                 int x, int y,
+                                 const char *start, const char *end,
+                                 int scale, uint32_t color)
+{
+    char buf[160];
+    size_t len = (size_t)(end - start);
+    if (len >= sizeof(buf)) len = sizeof(buf) - 1;
+    memcpy(buf, start, len);
+    buf[len] = '\0';
+    draw_text_utf8_rgb(fb, fw, fh, x, y, buf, scale, color);
+    return 1;
+}
+
+static int draw_text_utf8_wrapped_rgb(uint32_t *fb, int fw, int fh,
+                                      int x, int y, int max_w, int max_lines,
+                                      const char *text, int scale,
+                                      uint32_t color)
+{
+    const char *p = text;
+    const char *line_start = text;
+    int line_w = 0;
+    int lines = 0;
+    int line_h = 26 * scale;
+
+    while (*p && lines < max_lines) {
+        const char *char_start = p;
+        uint32_t cp = utf8_next_codepoint(&p);
+        int cw = utf8_codepoint_width(cp, scale);
+        if ((cp == '\n') || (line_w > 0 && line_w + cw > max_w)) {
+            draw_utf8_segment_rgb(fb, fw, fh, x, y + lines * line_h,
+                                  line_start, char_start, scale, color);
+            lines++;
+            if (cp == '\n') {
+                line_start = p;
+                line_w = 0;
+            } else {
+                line_start = char_start;
+                line_w = cw;
+            }
+            continue;
+        }
+        line_w += cw;
+    }
+
+    if (lines < max_lines && line_start < p) {
+        draw_utf8_segment_rgb(fb, fw, fh, x, y + lines * line_h,
+                              line_start, p, scale, color);
+        lines++;
+    }
+    return lines;
+}
+
 static void blit_icon_rgb(uint32_t *fb, int fw, int fh,
                           int x, int y, const uint32_t *icon)
 {
@@ -719,13 +779,13 @@ static int retail_apply_voice_state(void)
     if (question[0]) {
         char line_q[120];
         snprintf(g_voice_question, sizeof(g_voice_question), "%s", question);
-        snprintf(line_q, sizeof(line_q), "Q: %s", question);
+        snprintf(line_q, sizeof(line_q), "问：%s", question);
         retail_push_voice_history(line_q);
     }
     if (answer[0]) {
         char line_a[120];
         snprintf(g_voice_answer, sizeof(g_voice_answer), "%s", answer);
-        snprintf(line_a, sizeof(line_a), "A: %s", answer);
+        snprintf(line_a, sizeof(line_a), "答：%s", answer);
         retail_push_voice_history(line_a);
     }
     retail_apply_voice_cart_command(cart_cmd);
@@ -755,8 +815,8 @@ static void retail_speak_product_added(const struct retail_product *product)
     if (!product) return;
     snprintf(text, sizeof(text), "QR recognized %s, added to cart.", product->name);
     retail_speak_text_async(text);
-    snprintf(g_voice_question, sizeof(g_voice_question), "QR: %s", product->name);
-    snprintf(g_voice_answer, sizeof(g_voice_answer), "Added %s to cart.", product->name);
+    snprintf(g_voice_question, sizeof(g_voice_question), "扫码：%s", product->name);
+    snprintf(g_voice_answer, sizeof(g_voice_answer), "%s已加入购物车", product->name);
     retail_push_voice_history(g_voice_question);
     retail_push_voice_history(g_voice_answer);
 }
@@ -977,10 +1037,19 @@ static void draw_voice_history_panel(uint32_t *fb, int fw, int fh,
 {
     fill_rect_rgb(fb, fw, fh, x + 134, y + 16, w - 154, h - 32, 0xFF0F2C3B);
     draw_rect_rgb(fb, fw, fh, x + 134, y + 16, w - 154, h - 32, 0xFF24536A, 1);
+    int text_x = x + 154;
+    int text_y = y + 24;
+    int text_w = w - 190;
+    int remaining_lines = (h - 44) / 26;
+    if (remaining_lines > 5) remaining_lines = 5;
     for (int i = 0; i < VOICE_HISTORY_LINES; i++) {
-        uint32_t color = (strncmp(g_voice_history[i], "A:", 2) == 0) ? 0xFF52E27E : 0xFFFFFFFF;
-        draw_text_rgb(fb, fw, fh, x + 154, y + 24 + i * 24,
-                      g_voice_history[i], 2, color);
+        if (remaining_lines <= 0) break;
+        uint32_t color = (strstr(g_voice_history[i], "答：") != NULL) ? 0xFF52E27E : 0xFFFFFFFF;
+        int used = draw_text_utf8_wrapped_rgb(fb, fw, fh, text_x, text_y,
+                                              text_w, remaining_lines,
+                                              g_voice_history[i], 1, color);
+        text_y += used * 26;
+        remaining_lines -= used;
     }
 }
 

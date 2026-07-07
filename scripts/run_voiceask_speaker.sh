@@ -9,6 +9,7 @@ CACHE_DIR="$PROJECT_DIR/cache"
 WELCOME_MP3="$CACHE_DIR/welcome_tts.mp3"
 WELCOME_TEXT="${WELCOME_TEXT:-欢迎来到智能售货机。}"
 VOICE_STATE_FILE="${VOICE_STATE_FILE:-/tmp/qsm_retail_voice_state}"
+VOICE_WAKE_WORDS="${VOICE_WAKE_WORDS:-小智小智|小智|智能售货机|售货机}"
 
 if [ -f "$ASR_ENV" ]; then
     # shellcheck disable=SC1090
@@ -26,13 +27,9 @@ state_escape() {
 }
 
 ui_safe_text() {
-    fallback="$2"
     text="$(printf '%s' "$1" | state_escape)"
-    if printf '%s' "$text" | LC_ALL=C grep -q '[^ -~]'; then
-        printf '%s\n' "$fallback"
-    else
-        printf '%s\n' "$text"
-    fi
+    [ -n "$text" ] || text="$2"
+    printf '%s\n' "$text"
 }
 
 voice_cart_command() {
@@ -59,8 +56,8 @@ voice_cart_command() {
 }
 
 write_voice_state() {
-    question="$(ui_safe_text "$1" "VOICE INPUT")"
-    answer="$(ui_safe_text "$2" "CHINESE REPLY PLAYED")"
+    question="$(ui_safe_text "$1" "等待语音输入")"
+    answer="$(ui_safe_text "$2" "语音回复已完成")"
     cart_cmd="$(printf '%s' "${3:-}" | state_escape)"
     tmp="${VOICE_STATE_FILE}.tmp"
     {
@@ -70,6 +67,36 @@ write_voice_state() {
         printf 'UPDATED_MS=%s\n' "$(date +%s 2>/dev/null || echo 0)"
     } > "$tmp"
     mv "$tmp" "$VOICE_STATE_FILE"
+}
+
+contains_wake_word() {
+    text="$1"
+    old_ifs="$IFS"
+    IFS='|'
+    for word in $VOICE_WAKE_WORDS; do
+        IFS="$old_ifs"
+        [ -n "$word" ] || continue
+        case "$text" in
+            *"$word"*) return 0 ;;
+        esac
+        IFS='|'
+    done
+    IFS="$old_ifs"
+    return 1
+}
+
+strip_wake_word() {
+    text="$1"
+    old_ifs="$IFS"
+    IFS='|'
+    for word in $VOICE_WAKE_WORDS; do
+        IFS="$old_ifs"
+        [ -n "$word" ] || continue
+        text="$(printf '%s' "$text" | sed "s/$word//g")"
+        IFS='|'
+    done
+    IFS="$old_ifs"
+    printf '%s' "$text" | state_escape
 }
 
 prepare_speaker() {
@@ -91,9 +118,11 @@ ensure_dns() {
 
 ensure_network() {
     ensure_dns
-    if ! ping -c 1 -W 3 openspeech.bytedance.com >/dev/null 2>&1; then
-        echo "Network is not ready. Trying Wi-Fi reconnect..."
-        "$PROJECT_DIR/scripts/connect_wifi.sh" || true
+    if ! ping -c 1 -W 2 openspeech.bytedance.com >/dev/null 2>&1; then
+        echo "网络暂未连通，本次仍继续录音识别；如 ASR 失败请检查 Wi-Fi。"
+        if [ "${VOICE_TRY_WIFI_RECONNECT:-0}" = "1" ]; then
+            "$PROJECT_DIR/scripts/connect_wifi.sh" || true
+        fi
         ensure_dns
     fi
 }
@@ -319,6 +348,7 @@ play_welcome() {
 run_embed_command() {
     cmd="$1"
     log="/tmp/embed_project_voiceask.log"
+    require_wake=0
     rm -f /tmp/embed_tts_response.json /tmp/embed_tts_audio.b64 /tmp/embed_tts_reply.mp3 \
         /tmp/embed_tts_response.dechunked.jsonl /tmp/embed_tts_audio_fixed.b64 \
         /tmp/embed_tts_reply_fixed.mp3 /tmp/embed_tts_reply_fixed.wav \
@@ -326,15 +356,32 @@ run_embed_command() {
 
     case "$cmd" in
         voiceask*)
+            require_wake=1
             ensure_dns
             prepare_mic
-            echo "Please speak now. Recording ${VOICE_SECONDS:-8} seconds..."
+            echo "请先说唤醒词“小智小智”，再提出问题。录音 ${VOICE_SECONDS:-8} 秒..."
             ;;
     esac
 
     printf '%s\nexit\n' "$cmd" | "$BIN" "$CATALOG" > "$log" 2>&1 || true
     question="$(sed -n 's/.*Recognized:[[:space:]]*\(.*\)/\1/p' "$log" | tail -1)"
-    [ -n "$question" ] || question="$(printf '%s' "$cmd" | sed 's/^ask[[:space:]]*//; s/^voiceask[[:space:]]*[0-9]*//')"
+    if [ -z "$question" ] && [ "$require_wake" -eq 0 ]; then
+        question="$(printf '%s' "$cmd" | sed 's/^ask[[:space:]]*//; s/^voiceask[[:space:]]*[0-9]*//')"
+    fi
+
+    if [ -z "$question" ]; then
+        echo "未识别到有效语音，请靠近麦克风后重试。"
+        return
+    fi
+
+    if [ "$require_wake" -eq 1 ]; then
+        if ! contains_wake_word "$question"; then
+            echo "已听到语音，但未检测到唤醒词“小智小智”，本次不回复。"
+            return
+        fi
+        question="$(strip_wake_word "$question")"
+        [ -n "$question" ] || question="请问有什么可以帮您？"
+    fi
 
     if [ -n "$question" ] && run_open_chat_reply "$question"; then
         sed -n '/Recognized:/p' "$log"
@@ -359,11 +406,17 @@ run_embed_command() {
 
     answer="$(awk '/Recognized:/{seen=1; next} seen && length($0)>0 && $0 !~ /^>/ {print; exit}' "$log" 2>/dev/null || true)"
     [ -n "$answer" ] || answer="$(awk 'length($0)>0 && $0 !~ /^>/ && $0 !~ /^Embed_project/ && $0 !~ /^Commands:/ {last=$0} END{print last}' "$log" 2>/dev/null || true)"
-    [ -n "$answer" ] || answer="Voice command received."
+    case "$answer" in
+        *"Speech recognition failed or returned empty text."*|"")
+            answer="语音识别失败，请靠近麦克风后重试。"
+            ;;
+    esac
+    [ -n "$answer" ] || answer="语音指令已收到。"
     write_voice_state "$question" "$answer" "$(voice_cart_command "$question")"
     play_latest_tts || true
 }
 
+echo "QSM voice assistant with wake word is starting. Wake word: 小智小智"
 ensure_network
 prepare_speaker
 

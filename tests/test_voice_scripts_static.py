@@ -30,6 +30,10 @@ class VoiceAutoListenScriptTest(unittest.TestCase):
         self.assertIn("QUESTION=", text)
         self.assertIn("ANSWER=", text)
         self.assertIn("CART_CMD=", text)
+        self.assertIn("小智小智", text)
+        self.assertIn("contains_wake_word", text)
+        self.assertIn("未检测到唤醒词", text)
+        self.assertNotIn("CHINESE REPLY PLAYED", text)
 
     def test_speaker_config_uses_slightly_louder_lp_ln_volume(self):
         script = ROOT / "scripts" / "configure_board_voice_speaker.sh"
