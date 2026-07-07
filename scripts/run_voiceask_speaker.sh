@@ -7,9 +7,12 @@ BIN="$PROJECT_DIR/bin/embed_project"
 CATALOG="$PROJECT_DIR/data/products.csv"
 CACHE_DIR="$PROJECT_DIR/cache"
 WELCOME_MP3="$CACHE_DIR/welcome_tts.mp3"
+WAKE_ACK_MP3="$CACHE_DIR/wake_ack_tts.mp3"
+WAKE_ACK_WAV="$CACHE_DIR/wake_ack_tts.wav"
 WELCOME_TEXT="${WELCOME_TEXT:-欢迎来到智能售货机。}"
 VOICE_STATE_FILE="${VOICE_STATE_FILE:-/tmp/qsm_retail_voice_state}"
 VOICE_WAKE_WORDS="${VOICE_WAKE_WORDS:-小智小智|小智|智能售货机|售货机}"
+WAKE_ACK_TEXT="${WAKE_ACK_TEXT:-我在}"
 
 if [ -f "$ASR_ENV" ]; then
     # shellcheck disable=SC1090
@@ -39,6 +42,10 @@ voice_cart_command() {
             printf 'clear\n'
             return
             ;;
+        *checkout*|*pay*|*payment*|*jiesuan*|*结账*|*支付*|*买单*|*付款*|*一共*多少钱*|*总共*多少钱*|*合计*|*总价*)
+            printf 'checkout\n'
+            return
+            ;;
     esac
     case "$q" in
         *add*cola*|*buy*cola*|*scan*cola*|*加入*可乐*|*买*可乐*) printf 'add:cola\n'; return ;;
@@ -55,9 +62,40 @@ voice_cart_command() {
     printf '\n'
 }
 
+is_wake_text() {
+    q="$(printf '%s' "$1" | tr 'A-Z' 'a-z')"
+    case "$q" in
+        *语音助手*|*你好助手*|*小智*|*小知*|*智慧零售*|*售货机*|*智能售货机*|\
+        *voice*assistant*|*hello*assistant*|*xiao*zhi*|*xiaozhi*|*assistant*)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+extract_wake_command() {
+    printf '%s' "$1" | tr 'A-Z' 'a-z' | sed \
+        -e 's/语音助手//g' \
+        -e 's/你好助手//g' \
+        -e 's/小智//g' \
+        -e 's/小知//g' \
+        -e 's/智慧零售//g' \
+        -e 's/智能售货机//g' \
+        -e 's/售货机//g' \
+        -e 's/voice assistant//g' \
+        -e 's/hello assistant//g' \
+        -e 's/xiao zhi//g' \
+        -e 's/xiaozhi//g' \
+        -e 's/assistant//g' \
+        -e 's/^[[:space:]，,。.!！?？：:、-]*//' \
+        -e 's/[[:space:]，,。.!！?？：:、-]*$//'
+}
+
 write_voice_state() {
-    question="$(ui_safe_text "$1" "等待语音输入")"
-    answer="$(ui_safe_text "$2" "语音回复已完成")"
+    question="$(printf '%s' "$1" | state_escape)"
+    answer="$(printf '%s' "$2" | state_escape)"
     cart_cmd="$(printf '%s' "${3:-}" | state_escape)"
     tmp="${VOICE_STATE_FILE}.tmp"
     {
@@ -97,6 +135,26 @@ strip_wake_word() {
     done
     IFS="$old_ifs"
     printf '%s' "$text" | state_escape
+}
+
+local_cart_reply() {
+    case "$1" in
+        checkout)
+            printf '%s\n' "好的，正在为您结账。请看屏幕上的合计金额和支付二维码。"
+            return 0
+            ;;
+        clear)
+            printf '%s\n' "购物车已清空。"
+            return 0
+            ;;
+        add:*)
+            printf '%s\n' "好的，已加入购物车。"
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
 }
 
 prepare_speaker() {
@@ -204,6 +262,13 @@ play_mp3() {
     fi
 }
 
+play_wav_file() {
+    wav="$1"
+    prepare_speaker
+    echo "Speaker playback: $wav channel=${VOICE_CHANNEL:-left}"
+    tinyplay "$wav" -D 0 -d 0 || aplay -D hw:0,0 "$wav"
+}
+
 play_latest_tts() {
     mp3="$(decode_latest_tts)" || {
         echo "TTS audio was not generated; terminal reply is still available."
@@ -260,6 +325,55 @@ play_text_tts() {
     play_mp3 "$mp3"
 }
 
+build_wake_ack_audio() {
+    mkdir -p "$CACHE_DIR"
+    raw="/tmp/embed_tts_wake_ack_response.http"
+    req="/tmp/embed_tts_wake_ack_request.json"
+    raw_wav="/tmp/embed_tts_wake_ack_raw.wav"
+
+    request_tts_text "$WAKE_ACK_TEXT" "$raw" "$req" || return 1
+    extract_tts_data_to_mp3 "$raw" "$WAKE_ACK_MP3" || return 1
+    rm -f "$raw_wav" "$WAKE_ACK_WAV"
+
+    if command -v mpg123 >/dev/null 2>&1; then
+        mpg123 -q --stereo -w "$raw_wav" "$WAKE_ACK_MP3" || true
+    fi
+    if [ ! -s "$raw_wav" ] && command -v ffmpeg >/dev/null 2>&1; then
+        ffmpeg -y -loglevel error -i "$WAKE_ACK_MP3" -ac 2 -ar 48000 "$raw_wav" || true
+    fi
+    [ -s "$raw_wav" ] || return 1
+
+    case "${VOICE_CHANNEL:-left}" in
+        right|R|r)
+            pan='pan=stereo|c0=0*c0|c1=c1'
+            ;;
+        both|stereo|B|b)
+            pan='pan=stereo|c0=c0|c1=c1'
+            ;;
+        left|L|l|*)
+            pan='pan=stereo|c0=c0|c1=0*c1'
+            ;;
+    esac
+    if command -v sox >/dev/null 2>&1; then
+        sox "$raw_wav" "$WAKE_ACK_WAV" gain "${VOICE_GAIN_DB:-1}" 2>/dev/null || cp "$raw_wav" "$WAKE_ACK_WAV"
+    else
+        cp "$raw_wav" "$WAKE_ACK_WAV"
+    fi
+    [ -s "$WAKE_ACK_WAV" ]
+}
+
+play_wake_ack() {
+    if [ ! -s "$WAKE_ACK_WAV" ]; then
+        echo "Building cached wake acknowledgement..."
+        build_wake_ack_audio || true
+    fi
+    if [ -s "$WAKE_ACK_WAV" ]; then
+        play_wav_file "$WAKE_ACK_WAV" || true
+    else
+        play_text_tts "${WAKE_ACK_TEXT}" || true
+    fi
+}
+
 request_open_chat() {
     question="$1"
     raw="/tmp/embed_open_chat_response.http"
@@ -314,12 +428,90 @@ is_retail_question() {
 run_open_chat_reply() {
     question="$1"
     [ -n "$question" ] || return 1
+    cart_cmd="$(voice_cart_command "$question")"
+    if [ -n "$cart_cmd" ]; then
+        answer="$(local_cart_reply "$cart_cmd")" || return 1
+        echo "Retail command: $cart_cmd"
+        echo "Assistant: $answer"
+        write_voice_state "$question" "$answer" "$cart_cmd"
+        play_text_tts "$answer" || true
+        return 0
+    fi
     echo "Open chat question: $question"
     answer="$(request_open_chat "$question" 2>/dev/null || true)"
     [ -n "$answer" ] || return 1
     echo "Assistant: $answer"
-    write_voice_state "$question" "$answer" "$(voice_cart_command "$question")"
+    write_voice_state "$question" "$answer" ""
     play_text_tts "$answer" || true
+}
+
+recognize_voice_once() {
+    seconds="$1"
+    label="${2:-voice}"
+    log="/tmp/embed_project_${label}.log"
+    rm -f "$log"
+
+    ensure_dns
+    prepare_mic
+    echo "Listening for ${label}. Recording ${seconds} seconds..." >&2
+    printf 'voiceask %s\nexit\n' "$seconds" | "$BIN" "$CATALOG" > "$log" 2>&1 || true
+    sed -n 's/.*Recognized:[[:space:]]*\(.*\)/\1/p' "$log" | tail -1
+}
+
+run_voice_question_once() {
+    seconds="${1:-${VOICE_COMMAND_SECONDS:-5}}"
+    question="$(recognize_voice_once "$seconds" command)"
+    if [ -z "$question" ]; then
+        echo "No speech recognized in active session."
+        return 0
+    fi
+
+    echo "Recognized: $question"
+    run_open_chat_reply "$question" || true
+}
+
+run_active_session() {
+    session_seconds="${VOICE_SESSION_SECONDS:-120}"
+    now="$(date +%s 2>/dev/null || echo 0)"
+    session_end=$((now + session_seconds))
+
+    echo "Active voice session started for ${session_seconds} seconds."
+    while true; do
+        now="$(date +%s 2>/dev/null || echo 0)"
+        [ "$now" -lt "$session_end" ] || break
+        echo "Listening for question in active session..."
+        run_voice_question_once "${VOICE_COMMAND_SECONDS:-5}"
+        sleep "${VOICE_SESSION_LOOP_PAUSE_SECONDS:-1}"
+    done
+    echo "Active voice session ended. Returning to wake word mode."
+}
+
+run_wake_once() {
+    wake_seconds="${1:-${VOICE_WAKE_SECONDS:-2}}"
+    wake_text="$(recognize_voice_once "$wake_seconds" wake)"
+
+    if [ -z "$wake_text" ]; then
+        echo "No wake word recognized."
+        return 0
+    fi
+
+    echo "Wake candidate: $wake_text"
+    if ! is_wake_text "$wake_text"; then
+        echo "Wake word not detected."
+        return 0
+    fi
+
+    command_text="$(extract_wake_command "$wake_text")"
+    echo "Wake word detected."
+    write_voice_state "唤醒成功" "$WAKE_ACK_TEXT" ""
+    play_wake_ack
+
+    if [ -n "$command_text" ] && [ "$(printf '%s' "$command_text" | wc -c | tr -d ' ')" -ge 4 ]; then
+        run_open_chat_reply "$command_text" || true
+    fi
+
+    echo "Please ask your question now."
+    run_active_session
 }
 
 build_welcome_tts() {
@@ -381,6 +573,9 @@ run_embed_command() {
             else
                 echo "请开始提问。录音 ${VOICE_SECONDS:-8} 秒..."
             fi
+            display_seconds="$(printf '%s' "$cmd" | sed -n 's/^voiceask[[:space:]]*\([0-9][0-9]*\).*/\1/p')"
+            [ -n "$display_seconds" ] || display_seconds="${VOICE_SECONDS:-8}"
+            echo "Please speak now. Recording ${display_seconds} seconds..."
             ;;
     esac
 
@@ -448,6 +643,15 @@ ensure_network
 prepare_speaker
 
 case "${1:-}" in
+    --prepare-cache)
+        build_wake_ack_audio || true
+        exit 0
+        ;;
+    --wake-once)
+        seconds="${2:-${VOICE_WAKE_SECONDS:-2}}"
+        run_wake_once "$seconds"
+        exit 0
+        ;;
     --once)
         seconds="${2:-${VOICE_SECONDS:-8}}"
         wake_seconds="${VOICE_WAKE_SECONDS:-3}"

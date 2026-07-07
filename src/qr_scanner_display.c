@@ -94,6 +94,7 @@ static unsigned int   g_order_seq = 0;
 static int            g_last_total_cents = 0;
 static char           g_order_id[48] = "ORDER: pending";
 static char           g_payment_url[160] = "PAY: scan checkout";
+static int            g_checkout_requested = 0;
 static time_t         g_voice_state_mtime = 0;
 static char           g_voice_question[160] = "等待唤醒词";
 static char           g_voice_answer[160] = "请说小智小智后提问";
@@ -649,12 +650,52 @@ static int retail_payload_alias_matches(const char *value, const char *product_i
     return 0;
 }
 
-static const struct retail_product *retail_product_from_payload(const char *payload)
+static void retail_payload_extract_value(const char *payload, char *out, size_t out_sz)
 {
     const char *value = payload;
-    if (!payload || !payload[0]) return NULL;
+    const char *keys[] = {
+        "product=", "id=", "sku=", "barcode=",
+        "\"product\"", "\"id\"", "\"sku\"", "\"barcode\""
+    };
+
+    if (!out || out_sz == 0) return;
+    out[0] = '\0';
+    if (!payload || !payload[0]) return;
+
     if (strncmp(payload, "product:", 8) == 0) value = payload + 8;
-    if (strncmp(payload, "qr:", 3) == 0) value = payload + 3;
+    else if (strncmp(payload, "qr:", 3) == 0) value = payload + 3;
+    else {
+        for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
+            const char *hit = strstr(payload, keys[i]);
+            if (!hit) continue;
+            hit += strlen(keys[i]);
+            while (*hit == ' ' || *hit == ':' || *hit == '=' || *hit == '"' || *hit == '\'') hit++;
+            value = hit;
+            break;
+        }
+    }
+
+    size_t j = 0;
+    while (value[j] && j + 1 < out_sz) {
+        char c = value[j];
+        if (c == '&' || c == '?' || c == '#' || c == ',' || c == ';' ||
+            c == '}' || c == ']' || c == '"' || c == '\'' ||
+            c == '\r' || c == '\n' || c == ' ') {
+            break;
+        }
+        out[j] = c;
+        j++;
+    }
+    out[j] = '\0';
+}
+
+static const struct retail_product *retail_product_from_payload(const char *payload)
+{
+    char extracted[96];
+    const char *value = extracted;
+    if (!payload || !payload[0]) return NULL;
+    retail_payload_extract_value(payload, extracted, sizeof(extracted));
+    if (!extracted[0]) return NULL;
 
     for (size_t i = 0; i < sizeof(g_products) / sizeof(g_products[0]); i++) {
         if (equals_ignore_case(value, g_products[i].id) ||
@@ -685,6 +726,7 @@ static const uint32_t *retail_product_icon(const struct retail_product *product)
 static void retail_cart_add_product(const struct retail_product *product)
 {
     if (!product) return;
+    g_checkout_requested = 0;
     for (int i = 0; i < g_cart_count; i++) {
         if (g_cart[i].product == product) {
             g_cart[i].quantity++;
@@ -725,6 +767,14 @@ static void money_text(int cents, char *out, size_t out_sz)
     snprintf(out, out_sz, "%d.%02d", cents / 100, cents % 100);
 }
 
+static void retail_checkout_summary(char *out, size_t out_sz)
+{
+    char total[24];
+    money_text(retail_cart_total_cents(), total, sizeof(total));
+    snprintf(out, out_sz, "PAYMENT READY: %d items total %s",
+             retail_cart_item_count(), total);
+}
+
 static void text_from_line(char *out, size_t out_sz, const char *line, const char *prefix)
 {
     size_t len = strlen(prefix);
@@ -733,16 +783,33 @@ static void text_from_line(char *out, size_t out_sz, const char *line, const cha
     out[strcspn(out, "\r\n")] = '\0';
 }
 
+static void retail_create_payment_order(void);
+static void retail_push_voice_history(const char *line);
+
 static void retail_apply_voice_cart_command(const char *cmd)
 {
     if (!cmd || !cmd[0]) return;
     if (equals_ignore_case(cmd, "clear")) {
         retail_cart_clear();
+        g_checkout_requested = 0;
+        return;
+    }
+    if (equals_ignore_case(cmd, "checkout")) {
+        char summary[120];
+        g_checkout_requested = 1;
+        g_last_total_cents = retail_cart_total_cents();
+        retail_create_payment_order();
+        retail_checkout_summary(summary, sizeof(summary));
+        snprintf(g_voice_question, sizeof(g_voice_question), "CHECKOUT");
+        snprintf(g_voice_answer, sizeof(g_voice_answer), "%s", summary);
+        retail_push_voice_history(g_voice_question);
+        retail_push_voice_history(g_voice_answer);
         return;
     }
     if (strncmp(cmd, "add:", 4) == 0) {
         const struct retail_product *product = retail_product_from_payload(cmd + 4);
         retail_cart_add_product(product);
+        g_checkout_requested = 0;
     }
 }
 
@@ -999,11 +1066,10 @@ static void draw_payment_panel(int x, int y, int w, int h, unsigned int qr_count
     uint32_t *fb = (uint32_t *)g_ui_map;
     int fw = g_ui_w;
     int fh = g_ui_h;
+    char amount[24];
+    (void)qr_count;
 
     g_last_total_cents = retail_cart_total_cents();
-    if (qr_count || g_last_total_cents > 0) {
-        retail_create_payment_order();
-    }
 
     fill_rect_rgb(fb, fw, fh, x, y, w, h, 0xFF0B202B);
     draw_rect_rgb(fb, fw, fh, x, y, w, h, 0xFF145169, 1);
@@ -1021,6 +1087,16 @@ static void draw_payment_panel(int x, int y, int w, int h, unsigned int qr_count
     draw_text_utf8_rgb(fb, fw, fh, x + 122, y + 82, "请在", 1, 0xFFCED7DD);
     draw_text_rgb(fb, fw, fh, x + 178, y + 80, "120", 2, 0xFF52E27E);
     draw_text_utf8_rgb(fb, fw, fh, x + 122, y + 110, "秒内完成支付", 1, 0xFFCED7DD);
+
+    money_text(g_last_total_cents, amount, sizeof(amount));
+    fill_rect_rgb(fb, fw, fh, x + 112, y + 18, w - 132, 112, 0xFF0B202B);
+    draw_text_rgb(fb, fw, fh, x + 122, y + 26,
+                  g_checkout_requested ? "PAYMENT READY" : "WAIT CHECKOUT",
+                  2, 0xFFFFFFFF);
+    draw_text_rgb(fb, fw, fh, x + 122, y + 56, g_order_id, 1, 0xFFCED7DD);
+    draw_text_rgb(fb, fw, fh, x + 122, y + 82, "AMOUNT", 1, 0xFFCED7DD);
+    draw_text_rgb(fb, fw, fh, x + 192, y + 78, amount, 3, 0xFF52E27E);
+    draw_text_rgb(fb, fw, fh, x + 122, y + 116, g_payment_url, 1, 0xFFCED7DD);
 
     int bx = x + w - 256;
     int bw = 236;

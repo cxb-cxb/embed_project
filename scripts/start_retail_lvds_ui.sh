@@ -5,7 +5,10 @@ cd /userdata/Embed_project
 
 pkill -9 gst-launch-1.0 2>/dev/null || true
 pkill -9 qr_scanner_display 2>/dev/null || true
-pkill -f "retail_lvds_watchdog" 2>/dev/null || true
+if [ -f /tmp/qr_scanner_display_watchdog.pid ]; then
+  old_watchdog="$(cat /tmp/qr_scanner_display_watchdog.pid 2>/dev/null || true)"
+  [ -n "$old_watchdog" ] && kill "$old_watchdog" 2>/dev/null || true
+fi
 pkill -9 weston-desktop-shell 2>/dev/null || true
 pkill -9 weston-keyboard 2>/dev/null || true
 pkill -9 weston 2>/dev/null || true

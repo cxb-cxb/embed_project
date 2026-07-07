@@ -171,6 +171,12 @@ class QrDisplayStaticTests(unittest.TestCase):
 
         self.assertIn('equals_ignore_case(value, "mineral_water")', code)
         self.assertIn('equals_ignore_case(value, "instant_noodles")', code)
+        self.assertIn("retail_payload_extract_value(", code)
+        self.assertIn('"product="', code)
+        self.assertIn('"id="', code)
+        self.assertIn('"sku="', code)
+        self.assertIn('"\\"product\\""', code)
+        self.assertIn('"\\"id\\""', code)
 
     def test_dynamic_cart_and_voice_state_are_used_by_ui(self):
         code = SRC.read_text(encoding="utf-8", errors="ignore")
@@ -188,6 +194,15 @@ class QrDisplayStaticTests(unittest.TestCase):
                 self.assertIn(symbol, code)
 
         self.assertNotIn("(void)product;\n    (void)qr_count;", code)
+
+    def test_checkout_voice_command_creates_payment_summary(self):
+        code = SRC.read_text(encoding="utf-8", errors="ignore")
+
+        self.assertIn('equals_ignore_case(cmd, "checkout")', code)
+        self.assertIn("retail_checkout_summary(", code)
+        self.assertIn("g_checkout_requested", code)
+        self.assertIn("retail_create_payment_order();", code)
+        self.assertIn("PAYMENT READY", code)
 
     def test_qr_decode_updates_cart_and_speaks(self):
         code = SRC.read_text(encoding="utf-8", errors="ignore")
