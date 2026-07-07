@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <fstream>
+#include <filesystem>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -36,6 +37,22 @@ std::vector<std::string> split(const std::string& value, char delimiter) {
         }
     }
     return parts;
+}
+
+bool barcodeMatches(const std::string& candidate, const std::string& expected) {
+    if (candidate == expected) {
+        return true;
+    }
+    if (candidate.size() == 13 && expected.size() == 12 && candidate.substr(0, 12) == expected) {
+        return true;
+    }
+    if (candidate.size() == 13 && candidate[0] == '0' && expected.size() == 12 && candidate.substr(1) == expected) {
+        return true;
+    }
+    if (candidate.size() == 12 && expected.size() == 13 && expected[0] == '0' && expected.substr(1) == candidate) {
+        return true;
+    }
+    return false;
 }
 
 Product product(std::string id, std::string name, std::string barcode, std::int64_t price,
@@ -87,7 +104,38 @@ Catalog Catalog::loadCsv(const std::string& path) {
         catalog.add(Product{columns[0], columns[1], columns[2], std::stoll(columns[3]), split(columns[4], '|')});
     }
 
+    const auto alias_path = std::filesystem::path(path).parent_path() / "barcode_aliases.csv";
+    catalog.loadBarcodeAliases(alias_path.string());
+
     return catalog;
+}
+
+void Catalog::loadBarcodeAliases(const std::string& path) {
+    std::ifstream file(path);
+    if (!file) {
+        return;
+    }
+
+    std::string line;
+    bool header = true;
+    while (std::getline(file, line)) {
+        line = trim(line);
+        if (line.empty() || line[0] == '#') {
+            continue;
+        }
+        if (header) {
+            header = false;
+            if (line.find("product_id,") == 0) {
+                continue;
+            }
+        }
+
+        auto columns = split(line, ',');
+        if (columns.size() < 2) {
+            continue;
+        }
+        barcode_aliases_.push_back({columns[0], columns[1]});
+    }
 }
 
 void Catalog::add(Product product) {
@@ -106,8 +154,16 @@ const Product* Catalog::findById(const std::string& id) const {
 
 const Product* Catalog::findByBarcode(const std::string& barcode) const {
     for (const auto& item : products_) {
-        if (item.barcode == barcode) {
+        if (barcodeMatches(barcode, item.barcode)) {
             return &item;
+        }
+    }
+    for (const auto& alias : barcode_aliases_) {
+        if (!barcodeMatches(barcode, alias.second)) {
+            continue;
+        }
+        if (const auto* product = findById(alias.first)) {
+            return product;
         }
     }
     return nullptr;

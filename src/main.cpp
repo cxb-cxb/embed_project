@@ -5,6 +5,7 @@
 #include "voice.hpp"
 
 #include <iomanip>
+#include <fstream>
 #include <iostream>
 #include <optional>
 #include <sstream>
@@ -98,12 +99,30 @@ void runVoice(const std::string& command, const Catalog& catalog, Cart& cart) {
     }
 }
 
+Catalog loadCatalog(int argc, char** argv) {
+    if (argc > 1) {
+        return Catalog::loadCsv(argv[1]);
+    }
+
+    const char* candidates[] = {
+        "/userdata/Embed_project/data/products.csv",
+        "data/products.csv",
+    };
+    for (const char* path : candidates) {
+        std::ifstream file(path);
+        if (file.good()) {
+            return Catalog::loadCsv(path);
+        }
+    }
+    return Catalog::loadDefault();
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
     Catalog catalog;
     try {
-        catalog = argc > 1 ? Catalog::loadCsv(argv[1]) : Catalog::loadDefault();
+        catalog = loadCatalog(argc, argv);
     } catch (const std::exception& ex) {
         std::cerr << "Failed to load catalog: " << ex.what() << "\n";
         return 1;

@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <string>
+#include <utility>
 #include <vector>
 
 class Catalog {
@@ -21,4 +22,7 @@ public:
 
 private:
     std::vector<Product> products_;
+    std::vector<std::pair<std::string, std::string>> barcode_aliases_;
+
+    void loadBarcodeAliases(const std::string& path);
 };

@@ -53,6 +53,7 @@
 #define MAX_BUFFERS     4
 #define LVDS_CONNECTOR_ID  154
 #define MAX_CART_ITEMS 16
+#define MAX_BARCODE_ALIASES 80
 #define OVERLAY_PANEL_X 10
 #define OVERLAY_PANEL_Y 10
 #define OVERLAY_PANEL_H 214
@@ -212,6 +213,18 @@ struct cart_line {
     int quantity;
 };
 
+struct barcode_alias {
+    char product_id[48];
+    char barcode[48];
+};
+
+struct barcode_box {
+    int x;
+    int y;
+    int w;
+    int h;
+};
+
 static const struct retail_product g_products[] = {
     {"water", "Water", "690100000001", 200},
     {"cola", "Cola", "690100000002", 350},
@@ -226,6 +239,9 @@ static const struct retail_product g_products[] = {
 };
 
 static struct cart_line g_cart[MAX_CART_ITEMS];
+static struct barcode_alias g_barcode_aliases[MAX_BARCODE_ALIASES];
+static int g_barcode_alias_count = 0;
+static int g_barcode_alias_loaded = 0;
 static int g_cart_count = 0;
 static const struct retail_product *g_last_product = NULL;
 static int g_last_price_cents = 0;
@@ -259,6 +275,129 @@ static const char *trim_payload(const char *payload)
     return payload;
 }
 
+static void retail_load_barcode_aliases(void);
+
+static void trim_in_place(char *value)
+{
+    char *start = value;
+    while (*start == ' ' || *start == '\t' || *start == '\r' || *start == '\n') start++;
+    if (start != value) memmove(value, start, strlen(start) + 1);
+    size_t len = strlen(value);
+    while (len > 0) {
+        char c = value[len - 1];
+        if (c != ' ' && c != '\t' && c != '\r' && c != '\n') break;
+        value[--len] = '\0';
+    }
+}
+
+static int barcode_matches(const char *candidate, const char *expected)
+{
+    size_t candidate_len = strlen(candidate);
+    size_t expected_len = strlen(expected);
+    if (strcmp(candidate, expected) == 0) return 1;
+    if (candidate_len == 13 && expected_len == 12 && strncmp(candidate, expected, 12) == 0) return 1;
+    if (candidate_len == 13 && candidate[0] == '0' && expected_len == 12 && strcmp(candidate + 1, expected) == 0) return 1;
+    if (candidate_len == 12 && expected_len == 13 && expected[0] == '0' && strcmp(candidate, expected + 1) == 0) return 1;
+    return 0;
+}
+
+static int digit_hamming(const char *a, const char *b)
+{
+    size_t la = strlen(a);
+    size_t lb = strlen(b);
+    if (la != lb) return 999;
+    int diff = 0;
+    for (size_t i = 0; i < la; i++) {
+        if (a[i] != b[i]) diff++;
+    }
+    return diff;
+}
+
+static int normalize_known_barcode(const char *candidate, char *out, size_t out_size)
+{
+    retail_load_barcode_aliases();
+    int best_diff = 999;
+    const char *best = NULL;
+
+    for (size_t i = 0; i < sizeof(g_products) / sizeof(g_products[0]); i++) {
+        if (barcode_matches(candidate, g_products[i].barcode)) {
+            snprintf(out, out_size, "%s", g_products[i].barcode);
+            return 1;
+        }
+        int diff = digit_hamming(candidate, g_products[i].barcode);
+        if (diff < best_diff) {
+            best_diff = diff;
+            best = g_products[i].barcode;
+        }
+    }
+    for (int i = 0; i < g_barcode_alias_count; i++) {
+        if (barcode_matches(candidate, g_barcode_aliases[i].barcode)) {
+            snprintf(out, out_size, "%s", g_barcode_aliases[i].barcode);
+            return 1;
+        }
+        int diff = digit_hamming(candidate, g_barcode_aliases[i].barcode);
+        if (diff < best_diff) {
+            best_diff = diff;
+            best = g_barcode_aliases[i].barcode;
+        }
+    }
+
+    if (best && best_diff <= 2) {
+        snprintf(out, out_size, "%s", best);
+        return 1;
+    }
+    return 0;
+}
+
+static const struct retail_product *retail_find_product_by_id(const char *id)
+{
+    for (size_t i = 0; i < sizeof(g_products) / sizeof(g_products[0]); i++) {
+        if (equals_ignore_case(id, g_products[i].id)) return &g_products[i];
+    }
+    return NULL;
+}
+
+static void retail_load_barcode_aliases_from(const char *path)
+{
+    FILE *fp = fopen(path, "r");
+    if (!fp) return;
+
+    char line[160];
+    int line_no = 0;
+    while (fgets(line, sizeof(line), fp)) {
+        line_no++;
+        trim_in_place(line);
+        if (line[0] == '\0' || line[0] == '#') continue;
+        if (line_no == 1 && strncmp(line, "product_id,", 11) == 0) continue;
+
+        char *comma = strchr(line, ',');
+        if (!comma) continue;
+        *comma = '\0';
+        char *product_id = line;
+        char *barcode = comma + 1;
+        trim_in_place(product_id);
+        trim_in_place(barcode);
+        if (product_id[0] == '\0' || barcode[0] == '\0') continue;
+        if (!retail_find_product_by_id(product_id)) continue;
+        if (g_barcode_alias_count >= MAX_BARCODE_ALIASES) break;
+
+        snprintf(g_barcode_aliases[g_barcode_alias_count].product_id,
+                 sizeof(g_barcode_aliases[g_barcode_alias_count].product_id), "%s", product_id);
+        snprintf(g_barcode_aliases[g_barcode_alias_count].barcode,
+                 sizeof(g_barcode_aliases[g_barcode_alias_count].barcode), "%s", barcode);
+        g_barcode_alias_count++;
+    }
+    fclose(fp);
+}
+
+static void retail_load_barcode_aliases(void)
+{
+    if (g_barcode_alias_loaded) return;
+    g_barcode_alias_loaded = 1;
+    retail_load_barcode_aliases_from("/userdata/Embed_project/data/barcode_aliases.csv");
+    retail_load_barcode_aliases_from("./data/barcode_aliases.csv");
+}
+
 static int retail_payload_alias_matches(const char *value, const char *product_id)
 {
     if (equals_ignore_case(product_id, "water")) {
@@ -275,6 +414,7 @@ static int retail_payload_alias_matches(const char *value, const char *product_i
 
 static const struct retail_product *retail_find_product(const char *payload)
 {
+    retail_load_barcode_aliases();
     const char *value = trim_payload(payload);
     const char *prefix = "product:";
     size_t prefix_len = strlen(prefix);
@@ -284,8 +424,13 @@ static const struct retail_product *retail_find_product(const char *payload)
         if (equals_ignore_case(value, g_products[i].id) ||
             equals_ignore_case(value, g_products[i].name) ||
             retail_payload_alias_matches(value, g_products[i].id) ||
-            strcmp(value, g_products[i].barcode) == 0) {
+            barcode_matches(value, g_products[i].barcode)) {
             return &g_products[i];
+        }
+    }
+    for (int i = 0; i < g_barcode_alias_count; i++) {
+        if (barcode_matches(value, g_barcode_aliases[i].barcode)) {
+            return retail_find_product_by_id(g_barcode_aliases[i].product_id);
         }
     }
     return NULL;
@@ -386,6 +531,267 @@ done:
     retail_reset_payment();
     snprintf(g_status_text, sizeof(g_status_text), "ADDED %s", product->name);
     return product;
+}
+
+static int ean13_checksum_ok(const char *digits)
+{
+    int sum = 0;
+    for (int i = 0; i < 12; i++) {
+        if (digits[i] < '0' || digits[i] > '9') return 0;
+        int d = digits[i] - '0';
+        sum += (i & 1) ? d * 3 : d;
+    }
+    if (digits[12] < '0' || digits[12] > '9') return 0;
+    return ((10 - (sum % 10)) % 10) == digits[12] - '0';
+}
+
+static int hamming7(const char *a, const char *b)
+{
+    int d = 0;
+    for (int i = 0; i < 7; i++) if (a[i] != b[i]) d++;
+    return d;
+}
+
+static int match_digit_pattern(const char *bits, const char **patterns, int *distance)
+{
+    int best_digit = -1;
+    int best_distance = 8;
+    for (int d = 0; d < 10; d++) {
+        int dist = hamming7(bits, patterns[d]);
+        if (dist < best_distance) {
+            best_distance = dist;
+            best_digit = d;
+        }
+    }
+    if (distance) *distance = best_distance;
+    return best_digit;
+}
+
+static int decode_ean13_modules(const char *bits, char *out, size_t out_size)
+{
+    static const char *left_odd[10] = {
+        "0001101","0011001","0010011","0111101","0100011",
+        "0110001","0101111","0111011","0110111","0001011"
+    };
+    static const char *left_even[10] = {
+        "0100111","0110011","0011011","0100001","0011101",
+        "0111001","0000101","0010001","0001001","0010111"
+    };
+    static const char *right[10] = {
+        "1110010","1100110","1101100","1000010","1011100",
+        "1001110","1010000","1000100","1001000","1110100"
+    };
+    static const char *parity_table[10] = {
+        "OOOOOO","OOEOEE","OOEEOE","OOEEEO","OEOOEE",
+        "OEEOOE","OEEEOO","OEOEOE","OEOEEO","OEEOEO"
+    };
+    char digits[14];
+    char parity[7];
+    int total_distance = 0;
+
+    if (out_size < 14) return 0;
+    if (bits[0] != '1' || bits[1] != '0' || bits[2] != '1') return 0;
+    if (bits[45] != '0' || bits[46] != '1' || bits[47] != '0' ||
+        bits[48] != '1' || bits[49] != '0') return 0;
+    if (bits[92] != '1' || bits[93] != '0' || bits[94] != '1') return 0;
+
+    for (int i = 0; i < 6; i++) {
+        char digit_bits[8];
+        memcpy(digit_bits, bits + 3 + i * 7, 7);
+        digit_bits[7] = '\0';
+
+        int odd_dist = 0, even_dist = 0;
+        int odd_digit = match_digit_pattern(digit_bits, left_odd, &odd_dist);
+        int even_digit = match_digit_pattern(digit_bits, left_even, &even_dist);
+        if (odd_dist <= even_dist) {
+            digits[i + 1] = (char)('0' + odd_digit);
+            parity[i] = 'O';
+            total_distance += odd_dist;
+        } else {
+            digits[i + 1] = (char)('0' + even_digit);
+            parity[i] = 'E';
+            total_distance += even_dist;
+        }
+    }
+    parity[6] = '\0';
+
+    int first_digit = -1;
+    for (int d = 0; d < 10; d++) {
+        if (strcmp(parity, parity_table[d]) == 0) {
+            first_digit = d;
+            break;
+        }
+    }
+    if (first_digit < 0) return 0;
+    digits[0] = (char)('0' + first_digit);
+
+    for (int i = 0; i < 6; i++) {
+        char digit_bits[8];
+        memcpy(digit_bits, bits + 50 + i * 7, 7);
+        digit_bits[7] = '\0';
+
+        int dist = 0;
+        int digit = match_digit_pattern(digit_bits, right, &dist);
+        digits[i + 7] = (char)('0' + digit);
+        total_distance += dist;
+    }
+    digits[13] = '\0';
+
+    if (total_distance > 14) return 0;
+    if (normalize_known_barcode(digits, out, out_size)) return 1;
+    if (!ean13_checksum_ok(digits)) return 0;
+
+    memcpy(out, digits, 14);
+    return 1;
+}
+
+static int decode_ean13_window(uint8_t *row, int width, int stride,
+                               int x0, int x1, int threshold,
+                               char *out, size_t out_size)
+{
+    char bits[96];
+    int span = x1 - x0;
+    if (span < 95) return 0;
+
+    for (int m = 0; m < 95; m++) {
+        int start = x0 + (int)((int64_t)m * span / 95);
+        int end = x0 + (int)((int64_t)(m + 1) * span / 95);
+        if (end <= start) end = start + 1;
+        int dark = 0;
+        int count = 0;
+        for (int x = start; x < end && x < width; x++) {
+            if (row[x * stride] < threshold) dark++;
+            count++;
+        }
+        bits[m] = (dark * 2 >= count) ? '1' : '0';
+    }
+    bits[95] = '\0';
+    return decode_ean13_modules(bits, out, out_size);
+}
+
+static int decode_ean13_window_auto(uint8_t *row, int width, int stride,
+                                    int x0, int x1,
+                                    char *out, size_t out_size)
+{
+    int min_y = 255;
+    int max_y = 0;
+    if (x0 < 0) x0 = 0;
+    if (x1 > width) x1 = width;
+    if (x1 - x0 < 95) return 0;
+
+    for (int x = x0; x < x1; x += 2) {
+        int v = row[x * stride];
+        if (v < min_y) min_y = v;
+        if (v > max_y) max_y = v;
+    }
+    if (max_y - min_y < 35) return 0;
+
+    int threshold = (min_y + max_y) / 2;
+    if (decode_ean13_window(row, width, stride, x0, x1, threshold, out, out_size)) {
+        return 1;
+    }
+
+    threshold = min_y + (max_y - min_y) * 45 / 100;
+    return decode_ean13_window(row, width, stride, x0, x1, threshold, out, out_size);
+}
+
+static int try_decode_ean13_row(uint8_t *row, int width, int stride,
+                                char *out, size_t out_size,
+                                struct barcode_box *box, int row_y, int offset_x)
+{
+    int min_y = 255, max_y = 0;
+    for (int x = 0; x < width; x += 2) {
+        int v = row[x * stride];
+        if (v < min_y) min_y = v;
+        if (v > max_y) max_y = v;
+    }
+    if (max_y - min_y < 45) return 0;
+
+    int threshold = (min_y + max_y) / 2;
+    int runs_color[512];
+    int runs_start[512];
+    int runs_width[512];
+    int run_count = 0;
+    int color = row[0] < threshold ? 1 : 0;
+    int start = 0;
+
+    for (int x = 1; x < width; x++) {
+        int c = row[x * stride] < threshold ? 1 : 0;
+        if (c != color) {
+            if (run_count < (int)(sizeof(runs_width) / sizeof(runs_width[0]))) {
+                runs_color[run_count] = color;
+                runs_start[run_count] = start;
+                runs_width[run_count] = x - start;
+                run_count++;
+            }
+            start = x;
+            color = c;
+        }
+    }
+    if (run_count < (int)(sizeof(runs_width) / sizeof(runs_width[0]))) {
+        runs_color[run_count] = color;
+        runs_start[run_count] = start;
+        runs_width[run_count] = width - start;
+        run_count++;
+    }
+
+    for (int i = 0; i + 58 < run_count; i++) {
+        if (!runs_color[i]) continue;
+        int x0 = runs_start[i];
+        int x1 = runs_start[i + 58] + runs_width[i + 58];
+        int span = x1 - x0;
+        if (span < 140 || span > width - 10) continue;
+        if (decode_ean13_window(row, width, stride, x0, x1, threshold, out, out_size)) {
+            if (box) {
+                box->x = offset_x + x0;
+                box->y = row_y - 70;
+                box->w = x1 - x0;
+                box->h = 140;
+            }
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int scan_ean13_barcode(uint8_t *y, int width, int height, int stride,
+                              char *out, size_t out_size, struct barcode_box *box)
+{
+    int y0 = height / 4;
+    int y1 = height * 3 / 4;
+    int step = height / 32;
+    if (step < 8) step = 8;
+
+    for (int row = y0; row <= y1; row += step) {
+        if (try_decode_ean13_row(y + row * stride, width, 1, out, out_size, box, row, 0)) return 1;
+        if (width > 80) {
+            uint8_t *line = y + row * stride;
+            if (try_decode_ean13_row(line + 20, width - 40, 1, out, out_size, box, row, 20)) return 1;
+        }
+    }
+
+    int min_width = width / 4;
+    int max_width = width * 3 / 4;
+    if (min_width < 160) min_width = 160;
+    for (int row = y0; row <= y1; row += 12) {
+        uint8_t *line = y + row * stride;
+        for (int win_w = min_width; win_w <= max_width; win_w += 24) {
+            int step_x = win_w / 8;
+            if (step_x < 16) step_x = 16;
+            for (int x0 = 0; x0 + win_w <= width; x0 += step_x) {
+                if (decode_ean13_window_auto(line, width, 1, x0, x0 + win_w, out, out_size)) {
+                    if (box) {
+                        box->x = x0;
+                        box->y = row - 80;
+                        box->w = win_w;
+                        box->h = 160;
+                    }
+                    return 1;
+                }
+            }
+        }
+    }
+    return 0;
 }
 
 static void draw_fill_rect(uint32_t *fb, int fw, int fh, int x, int y, int w, int h, uint32_t color)
@@ -551,6 +957,29 @@ static void draw_qr_outline(const struct quirc_code *code,
 }
 
 /* ── DRM 显示初始化 (纯 ioctl, 无需 libdrm) ───────────────────────── */
+
+static void draw_barcode_outline(const struct barcode_box *box,
+                                 unsigned int cam_w, unsigned int cam_h)
+{
+    if (!box || !g_drm_map || g_drm_map == MAP_FAILED || g_drm_w <= 0 || g_drm_h <= 0) return;
+
+    int x = clamp_int(box->x, 0, (int)cam_w - 1);
+    int y = clamp_int(box->y, 0, (int)cam_h - 1);
+    int w = clamp_int(box->w, 1, (int)cam_w - x);
+    int h = clamp_int(box->h, 1, (int)cam_h - y);
+
+    int rx0 = x * g_drm_w / (int)cam_w;
+    int ry0 = y * g_drm_h / (int)cam_h;
+    int rx1 = (x + w) * g_drm_w / (int)cam_w;
+    int ry1 = (y + h) * g_drm_h / (int)cam_h;
+    int rx = clamp_int(rx0, 0, g_drm_w - 1);
+    int ry = clamp_int(ry0, 0, g_drm_h - 1);
+    int rw = clamp_int(rx1 - rx0, 1, g_drm_w - rx);
+    int rh = clamp_int(ry1 - ry0, 1, g_drm_h - ry);
+
+    draw_rect_rgb((uint32_t *)g_drm_map, g_drm_w, g_drm_h,
+                  rx, ry, rw, rh, 0xFF00FF00, 5);
+}
 
 static int drm_display_init(int cam_w, int cam_h)
 {
@@ -1014,13 +1443,13 @@ int main(int argc, char **argv)
     unsigned int frame = 0, found = 0;
     int64_t t0 = now_ms();
     char last[256] = "";
-    int qr_absent_frames = 0;
-    int saw_qr_this_frame = 0;
+    int code_absent_frames = 0;
+    int saw_code_this_frame = 0;
 
     while (g_running) {
         unsigned int idx, yl, uvl;
         uint8_t *yp, *uvp;
-        saw_qr_this_frame = 0;
+        saw_code_this_frame = 0;
 
         if (camera_grab(&idx, &yp, &yl, &uvp, &uvl) < 0) {
             if (!g_running) break;
@@ -1053,7 +1482,7 @@ int main(int argc, char **argv)
                     draw_qr_outline(&code, cam_w, cam_h);
                 }
                 if (quirc_decode(&code, &data) == QUIRC_SUCCESS) {
-                    saw_qr_this_frame = 1;
+                    saw_code_this_frame = 1;
                     int same_payload = strcmp((char *)data.payload, last) == 0;
                     if (!same_payload) {
                         int handled_control = retail_handle_control_payload((char *)data.payload);
@@ -1083,9 +1512,39 @@ int main(int argc, char **argv)
             }
         }
 
-        if (saw_qr_this_frame) {
-            qr_absent_frames = 0;
-        } else if (++qr_absent_frames > 12) {
+        char barcode_payload[32];
+        struct barcode_box barcode_box = {0};
+        if (scan_ean13_barcode(yp, cam_w, cam_h, g_y_stride, barcode_payload, sizeof(barcode_payload), &barcode_box)) {
+            saw_code_this_frame = 1;
+            if (have_display) {
+                draw_barcode_outline(&barcode_box, cam_w, cam_h);
+            }
+            int same_payload = strcmp(barcode_payload, last) == 0;
+            if (!same_payload) {
+                const struct retail_product *product = retail_add_payload(barcode_payload);
+
+                printf("\n>>> BARCODE: %s <<<\n", barcode_payload);
+                printf("    box:%d,%d,%d,%d\n",
+                       barcode_box.x, barcode_box.y, barcode_box.w, barcode_box.h);
+                if (product) {
+                    printf("    added:%s total:%d.%02d\n", product->name,
+                           g_last_total_cents / 100, g_last_total_cents % 100);
+                } else {
+                    snprintf(g_status_text, sizeof(g_status_text), "NO PRODUCT MAP");
+                    printf("    no product mapping\n");
+                }
+                fflush(stdout);
+
+                strncpy(last, barcode_payload, sizeof(last) - 1);
+                last[sizeof(last) - 1] = '\0';
+                found++;
+                if (!continuous) g_running = 0;
+            }
+        }
+
+        if (saw_code_this_frame) {
+            code_absent_frames = 0;
+        } else if (++code_absent_frames > 12) {
             last[0] = 0;
         }
 
@@ -1097,7 +1556,7 @@ int main(int argc, char **argv)
 
         if (frame % 30 == 0) {
             int64_t e = now_ms() - t0;
-            printf("[scanner] %u fr | %.1ffps | %d QR    \r",
+            printf("[scanner] %u fr | %.1ffps | %d codes    \r",
                    frame, frame * 1000.0f / (float)e, found);
             fflush(stdout);
         }
