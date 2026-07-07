@@ -43,26 +43,37 @@ class QrDisplayStaticTests(unittest.TestCase):
 
     def test_retail_overlay_contains_competition_ui_labels(self):
         code = SRC.read_text(encoding="utf-8", errors="ignore")
+        assets = (ROOT / "src" / "retail_ui_assets.h").read_text(encoding="utf-8", errors="ignore")
 
         for label in [
-            "RETAIL TERMINAL",
-            "CAMERA",
-            "VISION",
-            "ASR",
-            "CART",
-            "VOICE",
-            "TOTAL",
-            "CHECKOUT",
-            "PRODUCT CATEGORIES",
-            "PAYMENT",
-            "WECHAT",
-            "ALIPAY",
-            "UNIONPAY",
-            "CUSTOMER",
-            "ASSISTANT",
+            "智慧零售终端",
+            "摄像头",
+            "21fps",
+            "语音",
+            "可识别商品分类",
+            "购物车清单",
+            "扫码支付",
+            "客户：多少钱？",
+            "助手：矿泉水",
         ]:
             with self.subTest(label=label):
                 self.assertIn(label, code)
+
+        for symbol in [
+            "UI_GLYPHS",
+            "UI_ICON_WATER",
+            "UI_ICON_COLA",
+            "UI_ICON_MILK",
+            "UI_ICON_BREAD",
+            "UI_ICON_NOODLE",
+            "UI_ICON_CHIPS",
+            "UI_ICON_BISCUIT",
+            "UI_ICON_TOOTHPASTE",
+            "UI_ICON_TISSUE",
+            "UI_ICON_SOAP",
+        ]:
+            with self.subTest(symbol=symbol):
+                self.assertIn(symbol, assets)
 
     def test_reference_style_sections_are_explicitly_drawn(self):
         code = SRC.read_text(encoding="utf-8", errors="ignore")
@@ -103,9 +114,8 @@ class QrDisplayStaticTests(unittest.TestCase):
 
         self.assertIn("draw_dashboard_background();", code)
         self.assertIn("fill_rect_rgb(fb, fw, fh, 0, 0, fw, fh", code)
-        self.assertNotIn("fill_rect_rgb(fb, fw, fh, 0, fh -", code)
-        self.assertIn("AI VOICE", code)
-        self.assertIn("SCAN READY", code)
+        self.assertIn("安全认证，请放心使用", code)
+        self.assertIn("遇到问题？点帮助或呼叫店员", code)
 
     def test_qr_outline_is_drawn_before_payload_decode_gate(self):
         code = SRC.read_text(encoding="utf-8", errors="ignore")

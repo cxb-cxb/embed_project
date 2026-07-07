@@ -34,6 +34,7 @@
 #include <drm/drm_fourcc.h>
 
 #include "quirc.h"
+#include "retail_ui_assets.h"
 
 /* libdrm constants not in kernel uapi headers */
 #ifndef DRM_MODE_CONNECTED
@@ -398,6 +399,112 @@ static void draw_text_shadow_rgb(uint32_t *fb, int fw, int fh,
     draw_text_rgb(fb, fw, fh, x, y, text, scale, color);
 }
 
+static uint32_t utf8_next_codepoint(const char **text)
+{
+    const unsigned char *s = (const unsigned char *)(*text);
+    uint32_t cp;
+    if (s[0] < 0x80) {
+        *text += 1;
+        return s[0];
+    }
+    if ((s[0] & 0xE0) == 0xC0 && s[1]) {
+        cp = ((uint32_t)(s[0] & 0x1F) << 6) | (uint32_t)(s[1] & 0x3F);
+        *text += 2;
+        return cp;
+    }
+    if ((s[0] & 0xF0) == 0xE0 && s[1] && s[2]) {
+        cp = ((uint32_t)(s[0] & 0x0F) << 12) |
+             ((uint32_t)(s[1] & 0x3F) << 6) |
+             (uint32_t)(s[2] & 0x3F);
+        *text += 3;
+        return cp;
+    }
+    *text += 1;
+    return '?';
+}
+
+static const struct ui_glyph24 *find_ui_glyph(uint32_t codepoint)
+{
+    for (size_t i = 0; i < UI_GLYPH_COUNT; i++) {
+        if (UI_GLYPHS[i].codepoint == codepoint) return &UI_GLYPHS[i];
+    }
+    return NULL;
+}
+
+static int draw_codepoint_rgb(uint32_t *fb, int fw, int fh,
+                              int x, int y, uint32_t cp,
+                              int scale, uint32_t color)
+{
+    if (cp < 0x80) {
+        draw_char_rgb(fb, fw, fh, x, y + scale * 2, (char)cp, scale, color);
+        return 6 * scale;
+    }
+    const struct ui_glyph24 *glyph = find_ui_glyph(cp);
+    if (!glyph) return 13 * scale;
+    int pixel = scale;
+    for (int row = 0; row < UI_GLYPH_H; row++) {
+        uint32_t bits = glyph->rows[row];
+        for (int col = 0; col < UI_GLYPH_W; col++) {
+            if (bits & (1U << (UI_GLYPH_W - 1 - col))) {
+                fill_rect_rgb(fb, fw, fh,
+                              x + col * pixel,
+                              y + row * pixel,
+                              pixel, pixel, color);
+            }
+        }
+    }
+    return (UI_GLYPH_W + 2) * pixel;
+}
+
+static void draw_text_utf8_rgb(uint32_t *fb, int fw, int fh,
+                               int x, int y, const char *text,
+                               int scale, uint32_t color)
+{
+    int cursor = x;
+    while (*text) {
+        uint32_t cp = utf8_next_codepoint(&text);
+        cursor += draw_codepoint_rgb(fb, fw, fh, cursor, y, cp, scale, color);
+    }
+}
+
+static void draw_text_utf8_shadow_rgb(uint32_t *fb, int fw, int fh,
+                                      int x, int y, const char *text,
+                                      int scale, uint32_t color)
+{
+    draw_text_utf8_rgb(fb, fw, fh, x + scale, y + scale, text, scale, 0xFF000000);
+    draw_text_utf8_rgb(fb, fw, fh, x, y, text, scale, color);
+}
+
+static void blit_icon_rgb(uint32_t *fb, int fw, int fh,
+                          int x, int y, const uint32_t *icon)
+{
+    if (!icon) return;
+    for (int row = 0; row < UI_ICON_H; row++) {
+        int yy = y + row;
+        if (yy < 0 || yy >= fh) continue;
+        for (int col = 0; col < UI_ICON_W; col++) {
+            int xx = x + col;
+            if (xx < 0 || xx >= fw) continue;
+            fb[yy * fw + xx] = icon[row * UI_ICON_W + col];
+        }
+    }
+}
+
+static void draw_circle_rgb(uint32_t *fb, int fw, int fh,
+                            int cx, int cy, int r, uint32_t color)
+{
+    int rr = r * r;
+    for (int y = cy - r; y <= cy + r; y++) {
+        if (y < 0 || y >= fh) continue;
+        for (int x = cx - r; x <= cx + r; x++) {
+            if (x < 0 || x >= fw) continue;
+            int dx = x - cx;
+            int dy = y - cy;
+            if (dx * dx + dy * dy <= rr) fb[y * fw + x] = color;
+        }
+    }
+}
+
 static void draw_panel_header(uint32_t *fb, int fw, int fh,
                               int x, int y, int w, const char *title,
                               uint32_t color)
@@ -468,41 +575,26 @@ static void retail_create_payment_order(void)
 static void dashboard_layout(int *cam_x, int *cam_y, int *cam_w, int *cam_h,
                              int *side_x, int *side_y, int *side_w, int *side_h)
 {
-    int margin = 24;
-    int gap = 18;
     int canvas_w = g_ui_w > 0 ? g_ui_w : g_drm_w;
     int canvas_h = g_ui_h > 0 ? g_ui_h : g_drm_h;
-    int sx = canvas_w - 420 - margin;
-    int sw = 420;
-    if (sx < 560) {
-        sx = canvas_w - 300 - margin;
-        sw = 300;
-    }
+    int margin = 24;
+    int top = 86;
+    int right_w = 560;
+    int gap = 18;
 
-    int cx = CAMERA_X;
-    int cy = CAMERA_Y;
-    int cw = sx - gap - cx;
-    int ch = cw * 3 / 4;
-    int max_ch = canvas_h - 284;
-    if (ch > max_ch) {
-        ch = max_ch;
-        cw = ch * 4 / 3;
+    if (canvas_w < 1180) {
+        right_w = 420;
     }
-    if (cw < 300) {
-        cw = canvas_w - margin * 2;
-        ch = cw * 3 / 4;
-        sx = margin;
-        sw = canvas_w - margin * 2;
-    }
-
-    *cam_x = cx;
-    *cam_y = cy;
-    *cam_w = cw;
-    *cam_h = ch;
-    *side_x = sx;
-    *side_y = cy;
-    *side_w = sw;
-    *side_h = canvas_h - cy - margin;
+    *cam_x = margin;
+    *cam_y = top;
+    *side_x = canvas_w - right_w - margin;
+    *side_y = top;
+    *side_w = right_w;
+    *side_h = canvas_h - top - 42;
+    *cam_w = *side_x - gap - *cam_x;
+    *cam_h = canvas_h - top - 210;
+    if (*cam_h > *cam_w * 3 / 4) *cam_h = *cam_w * 3 / 4;
+    if (*cam_h < 340) *cam_h = 340;
 }
 
 static void draw_top_status_bar(void)
@@ -513,11 +605,19 @@ static void draw_top_status_bar(void)
 
     fill_rect_rgb(fb, fw, fh, 0, 0, fw, 64, 0xFF081018);
     draw_rect_rgb(fb, fw, fh, 0, 0, fw - 1, 63, 0xFF123A4A, 1);
-    draw_text_shadow_rgb(fb, fw, fh, 24, 18, "RETAIL TERMINAL", 3, 0xFFFFFFFF);
-    draw_text_rgb(fb, fw, fh, 340, 24, "BARCODE / QR / VISION", 2, 0xFFCED7DD);
-    draw_text_rgb(fb, fw, fh, fw - 310, 14, "VISION 20FPS", 1, 0xFF64D2FF);
-    draw_text_rgb(fb, fw, fh, fw - 310, 34, "ASR 0.8S", 1, 0xFF52E27E);
-    draw_text_rgb(fb, fw, fh, fw - 176, 34, "CHECKOUT READY", 1, 0xFF52E27E);
+    draw_rect_rgb(fb, fw, fh, 20, 14, 32, 32, 0xFFFFFFFF, 3);
+    fill_rect_rgb(fb, fw, fh, 17, 11, 8, 4, 0xFFFFFFFF);
+    draw_circle_rgb(fb, fw, fh, 28, 52, 4, 0xFFFFFFFF);
+    draw_circle_rgb(fb, fw, fh, 48, 52, 4, 0xFFFFFFFF);
+    draw_text_utf8_shadow_rgb(fb, fw, fh, 72, 18, "智慧零售终端", 1, 0xFFFFFFFF);
+
+    int bx = fw - 520;
+    draw_text_utf8_rgb(fb, fw, fh, bx, 20, "摄像头", 1, 0xFF64D2FF);
+    draw_text_rgb(fb, fw, fh, bx + 84, 22, "21fps", 2, 0xFF64D2FF);
+    draw_text_utf8_rgb(fb, fw, fh, bx + 178, 20, "语音", 1, 0xFFFFFFFF);
+    draw_text_rgb(fb, fw, fh, bx + 236, 22, "0.8s", 2, 0xFF52E27E);
+    draw_circle_rgb(fb, fw, fh, bx + 330, 34, 8, 0xFF52E27E);
+    draw_text_utf8_rgb(fb, fw, fh, bx + 346, 20, "结算就绪", 1, 0xFFFFFFFF);
 }
 
 static void draw_product_categories(int x, int y, int w, int h)
@@ -525,26 +625,27 @@ static void draw_product_categories(int x, int y, int w, int h)
     uint32_t *fb = (uint32_t *)g_ui_map;
     int fw = g_ui_w;
     int fh = g_ui_h;
-    const char *items[8] = {"WATER", "COLA", "MILK", "BREAD",
-                            "NOODLE", "CHIPS", "COOKIE", "SOAP"};
-    int cols = w >= 360 ? 4 : 2;
+    const char *items[10] = {"水", "可乐", "牛奶", "面包", "泡面",
+                             "薯片", "饼干", "牙膏", "纸巾", "香皂"};
+    int cols = 5;
     int gap = 8;
-    int tile_w = (w - 20 - gap * (cols - 1)) / cols;
-    int tile_h = w >= 360 ? 68 : 54;
-    int start_y = y + 42;
+    int tile_w = (w - 24 - gap * (cols - 1)) / cols;
+    int tile_h = 76;
+    int start_y = y + 38;
 
-    draw_panel_header(fb, fw, fh, x, y, w, "PRODUCT CATEGORIES", 0xFF1AA7C8);
-    for (int i = 0; i < 8; i++) {
+    fill_rect_rgb(fb, fw, fh, x, y, w, h, 0xFF0B202B);
+    draw_rect_rgb(fb, fw, fh, x, y, w, h, 0xFF145169, 1);
+    draw_text_utf8_rgb(fb, fw, fh, x + 14, y + 10, "可识别商品分类", 1, 0xFFFFFFFF);
+    for (int i = 0; i < 10; i++) {
         int col = i % cols;
         int row = i / cols;
-        int tx = x + 10 + col * (tile_w + gap);
+        int tx = x + 12 + col * (tile_w + gap);
         int ty = start_y + row * (tile_h + gap);
         if (ty + tile_h > y + h - 8) break;
-        fill_rect_rgb(fb, fw, fh, tx, ty, tile_w, tile_h, 0xFF19313B);
-        draw_rect_rgb(fb, fw, fh, tx, ty, tile_w, tile_h, 0xFF244B5C, 1);
-        fill_rect_rgb(fb, fw, fh, tx + 8, ty + 8, 24, 24,
-                      (i % 3 == 0) ? 0xFF3A86FF : ((i % 3 == 1) ? 0xFFEF476F : 0xFFFFD166));
-        draw_text_rgb(fb, fw, fh, tx + 8, ty + tile_h - 18, items[i], 1, 0xFFFFFFFF);
+        fill_rect_rgb(fb, fw, fh, tx, ty, tile_w, tile_h, 0xFF102D3A);
+        draw_rect_rgb(fb, fw, fh, tx, ty, tile_w, tile_h, 0xFF25536A, 1);
+        blit_icon_rgb(fb, fw, fh, tx + (tile_w - UI_ICON_W) / 2, ty + 6, ui_icon_by_index((size_t)i));
+        draw_text_utf8_rgb(fb, fw, fh, tx + tile_w / 2 - 18, ty + tile_h - 24, items[i], 1, 0xFFFFFFFF);
     }
 }
 
@@ -554,21 +655,41 @@ static void draw_cart_table(int x, int y, int w, int h,
     uint32_t *fb = (uint32_t *)g_ui_map;
     int fw = g_ui_w;
     int fh = g_ui_h;
-    char line[64];
+    (void)product;
+    (void)qr_count;
 
-    draw_panel_header(fb, fw, fh, x, y, w, "CART LIST", 0xFFFFD166);
-    draw_text_rgb(fb, fw, fh, x + 12, y + 44, "NO  ITEM       PRICE", 1, 0xFF9FB4BE);
-    draw_rect_rgb(fb, fw, fh, x + 8, y + 64, w - 16, 44, 0xFF244B5C, 1);
-    snprintf(line, sizeof(line), "1   %s", product);
-    draw_text_shadow_rgb(fb, fw, fh, x + 14, y + 78, line, 1, 0xFFFFFFFF);
-    draw_text_shadow_rgb(fb, fw, fh, x + w - 76, y + 78,
-                         qr_count ? "4.50" : "0.00", 1, 0xFFFFFFFF);
-    draw_rect_rgb(fb, fw, fh, x + 8, y + 116, w - 16, 44, 0xFF244B5C, 1);
-    draw_text_shadow_rgb(fb, fw, fh, x + 14, y + 130, "2   SOAP", 1, 0xFFFFFFFF);
-    draw_text_shadow_rgb(fb, fw, fh, x + w - 76, y + 130, "1.80", 1, 0xFFFFFFFF);
-    draw_text_rgb(fb, fw, fh, x + 14, y + h - 34, "TOTAL", 2, 0xFFFFFFFF);
-    snprintf(line, sizeof(line), "CNY %s", qr_count ? "6.30" : "1.80");
-    draw_text_rgb(fb, fw, fh, x + w - 118, y + h - 36, line, 2, 0xFF52E27E);
+    fill_rect_rgb(fb, fw, fh, x, y, w, h, 0xFF0B202B);
+    draw_rect_rgb(fb, fw, fh, x, y, w, h, 0xFF145169, 1);
+    draw_text_utf8_rgb(fb, fw, fh, x + 14, y + 10, "购物车清单", 1, 0xFFFFFFFF);
+    draw_text_utf8_rgb(fb, fw, fh, x + 26, y + 44, "序号", 1, 0xFFB8CDD5);
+    draw_text_utf8_rgb(fb, fw, fh, x + 116, y + 44, "商品名称", 1, 0xFFB8CDD5);
+    draw_text_utf8_rgb(fb, fw, fh, x + 320, y + 44, "单价", 1, 0xFFB8CDD5);
+    draw_text_utf8_rgb(fb, fw, fh, x + 412, y + 44, "数量", 1, 0xFFB8CDD5);
+    draw_text_utf8_rgb(fb, fw, fh, x + w - 84, y + 44, "小计", 1, 0xFFB8CDD5);
+
+    draw_rect_rgb(fb, fw, fh, x + 10, y + 70, w - 20, 44, 0xFF244B5C, 1);
+    draw_text_rgb(fb, fw, fh, x + 42, y + 86, "1", 2, 0xFFFFFFFF);
+    blit_icon_rgb(fb, fw, fh, x + 92, y + 72, UI_ICON_WATER);
+    draw_text_utf8_rgb(fb, fw, fh, x + 166, y + 82, "矿泉水", 1, 0xFFFFFFFF);
+    draw_text_rgb(fb, fw, fh, x + 334, y + 86, "2.00", 2, 0xFFFFFFFF);
+    draw_text_rgb(fb, fw, fh, x + 448, y + 86, "1", 2, 0xFFFFFFFF);
+    draw_text_rgb(fb, fw, fh, x + w - 70, y + 86, "2.00", 2, 0xFFFFFFFF);
+
+    draw_rect_rgb(fb, fw, fh, x + 10, y + 120, w - 20, 44, 0xFF244B5C, 1);
+    draw_text_rgb(fb, fw, fh, x + 42, y + 136, "2", 2, 0xFFFFFFFF);
+    blit_icon_rgb(fb, fw, fh, x + 92, y + 122, UI_ICON_SOAP);
+    draw_text_utf8_rgb(fb, fw, fh, x + 166, y + 132, "香皂", 1, 0xFFFFFFFF);
+    draw_text_rgb(fb, fw, fh, x + 334, y + 136, "1.80", 2, 0xFFFFFFFF);
+    draw_text_rgb(fb, fw, fh, x + 448, y + 136, "1", 2, 0xFFFFFFFF);
+    draw_text_rgb(fb, fw, fh, x + w - 70, y + 136, "1.80", 2, 0xFFFFFFFF);
+
+    fill_rect_rgb(fb, fw, fh, x + 10, y + h - 50, w - 20, 38, 0xFF0F2C3B);
+    draw_text_utf8_rgb(fb, fw, fh, x + 54, y + h - 39, "合计：", 1, 0xFFFFFFFF);
+    draw_text_rgb(fb, fw, fh, x + 132, y + h - 42, "2", 3, 0xFFFFFFFF);
+    draw_text_utf8_rgb(fb, fw, fh, x + 154, y + h - 39, "件商品", 1, 0xFFFFFFFF);
+    draw_text_utf8_rgb(fb, fw, fh, x + 278, y + h - 39, "应付金额：", 1, 0xFFFFFFFF);
+    draw_text_rgb(fb, fw, fh, x + w - 142, y + h - 42, "3.80", 3, 0xFF52E27E);
+    draw_text_utf8_rgb(fb, fw, fh, x + w - 56, y + h - 40, "元", 1, 0xFF52E27E);
 }
 
 static void draw_payment_panel(int x, int y, int w, int h, unsigned int qr_count)
@@ -582,21 +703,31 @@ static void draw_payment_panel(int x, int y, int w, int h, unsigned int qr_count
         retail_create_payment_order();
     }
 
-    draw_panel_header(fb, fw, fh, x, y, w, "PAYMENT", 0xFFEF476F);
-    fill_rect_rgb(fb, fw, fh, x + 12, y + 44, 84, 84, 0xFFFFFFFF);
-    for (int i = 0; i < 5; i++) {
-        draw_rect_rgb(fb, fw, fh, x + 18 + i * 12, y + 50, 7, 7, 0xFF000000, 2);
-        draw_rect_rgb(fb, fw, fh, x + 18, y + 50 + i * 12, 7, 7, 0xFF000000, 2);
+    fill_rect_rgb(fb, fw, fh, x, y, w, h, 0xFF0B202B);
+    draw_rect_rgb(fb, fw, fh, x, y, w, h, 0xFF145169, 1);
+    fill_rect_rgb(fb, fw, fh, x + 18, y + 24, 86, 86, 0xFFFFFFFF);
+    for (int yy = 0; yy < 9; yy++) {
+        for (int xx = 0; xx < 9; xx++) {
+            if (((xx * 13 + yy * 7 + xx * yy) % 5) < 2) {
+                fill_rect_rgb(fb, fw, fh, x + 24 + xx * 8, y + 30 + yy * 8, 5, 5, 0xFF000000);
+            }
+        }
     }
-    draw_text_rgb(fb, fw, fh, x + 110, y + 48, "SCAN PAY", 2, 0xFFFFFFFF);
-    draw_text_rgb(fb, fw, fh, x + 110, y + 82, qr_count ? "CNY 6.30" : "CNY 1.80", 2, 0xFF52E27E);
-    fill_rect_rgb(fb, fw, fh, x + 250, y + 44, w - 262, 34, 0xFF16A34A);
-    fill_rect_rgb(fb, fw, fh, x + 250, y + 88, w - 262, 34, 0xFF0A84FF);
-    fill_rect_rgb(fb, fw, fh, x + 250, y + 132, w - 262, 34, 0xFFDC2626);
-    draw_text_rgb(fb, fw, fh, x + 272, y + 54, "WECHAT", 2, 0xFFFFFFFF);
-    draw_text_rgb(fb, fw, fh, x + 272, y + 98, "ALIPAY", 2, 0xFFFFFFFF);
-    draw_text_rgb(fb, fw, fh, x + 272, y + 142, "UNIONPAY", 2, 0xFFFFFFFF);
-    draw_text_rgb(fb, fw, fh, x + 12, y + h - 42, g_order_id, 1, 0xFFCED7DD);
+    draw_text_utf8_rgb(fb, fw, fh, x + 122, y + 26, "扫码支付", 1, 0xFFFFFFFF);
+    draw_text_utf8_rgb(fb, fw, fh, x + 122, y + 56, "订单", 1, 0xFFCED7DD);
+    draw_text_rgb(fb, fw, fh, x + 178, y + 54, "000123", 2, 0xFFFFFFFF);
+    draw_text_utf8_rgb(fb, fw, fh, x + 122, y + 82, "请在", 1, 0xFFCED7DD);
+    draw_text_rgb(fb, fw, fh, x + 178, y + 80, "120", 2, 0xFF52E27E);
+    draw_text_utf8_rgb(fb, fw, fh, x + 122, y + 110, "秒内完成支付", 1, 0xFFCED7DD);
+
+    int bx = x + w - 256;
+    int bw = 236;
+    fill_rect_rgb(fb, fw, fh, bx, y + 24, bw, 36, 0xFF16A34A);
+    fill_rect_rgb(fb, fw, fh, bx, y + 70, bw, 36, 0xFF0A84FF);
+    fill_rect_rgb(fb, fw, fh, bx, y + 116, bw, 36, 0xFFDC2626);
+    draw_text_utf8_rgb(fb, fw, fh, bx + 70, y + 30, "微信支付", 1, 0xFFFFFFFF);
+    draw_text_utf8_rgb(fb, fw, fh, bx + 82, y + 76, "支付宝", 1, 0xFFFFFFFF);
+    draw_text_utf8_rgb(fb, fw, fh, bx + 58, y + 122, "银联云闪付", 1, 0xFFFFFFFF);
 }
 
 static void draw_voice_dialog_panel(int x, int y, int w, int h)
@@ -605,12 +736,25 @@ static void draw_voice_dialog_panel(int x, int y, int w, int h)
     int fw = g_ui_w;
     int fh = g_ui_h;
 
-    draw_panel_header(fb, fw, fh, x, y, w, "VOICE DIALOG", 0xFF3A86FF);
-    fill_rect_rgb(fb, fw, fh, x + 18, y + 52, 56, 56, 0xFF173B68);
-    draw_rect_rgb(fb, fw, fh, x + 18, y + 52, 56, 56, 0xFF3A86FF, 2);
-    draw_text_rgb(fb, fw, fh, x + 92, y + 54, "CUSTOMER  HOW MUCH IS WATER", 1, 0xFFFFFFFF);
-    draw_text_rgb(fb, fw, fh, x + 92, y + 86, "ASSISTANT WATER IS CNY 2.00", 1, 0xFF7FD1B9);
-    draw_text_rgb(fb, fw, fh, x + 92, y + 118, "VOICE INPUT LEFT MIC", 1, 0xFFCED7DD);
+    fill_rect_rgb(fb, fw, fh, x, y, w, h, 0xFF0B202B);
+    draw_rect_rgb(fb, fw, fh, x, y, w, h, 0xFF145169, 1);
+    int cx = x + 64;
+    int cy = y + h / 2;
+    draw_circle_rgb(fb, fw, fh, cx, cy, 50, 0xFF092F55);
+    draw_circle_rgb(fb, fw, fh, cx, cy, 38, 0xFF0E5FA8);
+    fill_rect_rgb(fb, fw, fh, cx - 26, cy - 16, 52, 34, 0xFFBCEBFF);
+    draw_rect_rgb(fb, fw, fh, cx - 26, cy - 16, 52, 34, 0xFF34C7FF, 2);
+    draw_circle_rgb(fb, fw, fh, cx - 12, cy, 4, 0xFF003A70);
+    draw_circle_rgb(fb, fw, fh, cx + 12, cy, 4, 0xFF003A70);
+    fill_rect_rgb(fb, fw, fh, cx - 2, cy - 30, 4, 14, 0xFF34C7FF);
+    draw_circle_rgb(fb, fw, fh, cx, cy - 36, 5, 0xFF34C7FF);
+
+    fill_rect_rgb(fb, fw, fh, x + 134, y + 16, w - 154, h - 32, 0xFF0F2C3B);
+    draw_rect_rgb(fb, fw, fh, x + 134, y + 16, w - 154, h - 32, 0xFF24536A, 1);
+    draw_text_utf8_rgb(fb, fw, fh, x + 154, y + 30, "客户：多少钱？", 1, 0xFFFFFFFF);
+    draw_text_utf8_rgb(fb, fw, fh, x + 154, y + 64, "助手：矿泉水", 1, 0xFF7FFFE0);
+    draw_text_rgb(fb, fw, fh, x + 316, y + 60, "2.00", 3, 0xFF52E27E);
+    draw_text_utf8_rgb(fb, fw, fh, x + 392, y + 64, "元", 1, 0xFF7FFFE0);
 }
 
 static void draw_dashboard_background(void)
@@ -623,12 +767,18 @@ static void draw_dashboard_background(void)
                      &side_x, &side_y, &side_w, &side_h);
 
     fill_rect_rgb(fb, fw, fh, 0, 0, fw, fh, 0xFF071018);
-    fill_rect_rgb(fb, fw, fh, cam_x - 8, cam_y - 8, cam_w + 16, cam_h + 16, 0xFF16242C);
-    fill_rect_rgb(fb, fw, fh, side_x, side_y, side_w, side_h, 0xFF142029);
-    fill_rect_rgb(fb, fw, fh, 24, cam_y + cam_h + 24, side_x - 42, 164, 0xFF142029);
-
-    draw_rect_rgb(fb, fw, fh, cam_x - 8, cam_y - 8, cam_w + 16, cam_h + 16, 0xFF00A676, 3);
+    fill_rect_rgb(fb, fw, fh, cam_x - 12, cam_y - 34, cam_w + 24, cam_h + 46, 0xFF0B202B);
+    draw_rect_rgb(fb, fw, fh, cam_x - 12, cam_y - 34, cam_w + 24, cam_h + 46, 0xFF145169, 1);
+    draw_rect_rgb(fb, fw, fh, cam_x, cam_y, cam_w, cam_h, 0xFF00FF00, 3);
     draw_top_status_bar();
+
+    fill_rect_rgb(fb, fw, fh, 0, fh - 34, fw, 34, 0xFF071D28);
+    draw_rect_rgb(fb, fw, fh, 0, fh - 34, fw - 1, 33, 0xFF123A4A, 1);
+    draw_text_utf8_rgb(fb, fw, fh, 48, fh - 28, "安全认证，请放心使用", 1, 0xFFCED7DD);
+    draw_text_utf8_rgb(fb, fw, fh, fw / 2 - 90, fh - 28,
+                       "遇到问题？点帮助或呼叫店员", 1, 0xFFCED7DD);
+    draw_text_utf8_rgb(fb, fw, fh, fw - 150, fh - 28, "帮助", 1, 0xFFFFFFFF);
+    draw_text_utf8_rgb(fb, fw, fh, fw - 82, fh - 28, "退出", 1, 0xFFFFFFFF);
 }
 
 static void retail_product_label(const char *payload, char *out, size_t out_sz)
@@ -648,8 +798,6 @@ static void draw_retail_ui_overlay(const char *last_payload,
                                    unsigned int qr_count,
                                    int64_t uptime_ms)
 {
-    uint32_t *fb = (uint32_t *)g_ui_map;
-    int fw = g_ui_w;
     int fh = g_ui_h;
     int cam_x, cam_y, cam_w, cam_h, side_x, side_y, side_w, side_h;
     char product[32];
@@ -657,26 +805,20 @@ static void draw_retail_ui_overlay(const char *last_payload,
     int categories_h;
     int cart_h;
     int payment_h;
-    int gap = 14;
+    int gap = 20;
 
     retail_product_label(last_payload, product, sizeof(product));
     dashboard_layout(&cam_x, &cam_y, &cam_w, &cam_h,
                      &side_x, &side_y, &side_w, &side_h);
 
-    draw_text_shadow_rgb(fb, fw, fh, cam_x, cam_y - 34, "CAMERA", 2, 0xFF00FF00);
-    draw_text_rgb(fb, fw, fh, cam_x + 16, cam_y + 16, "AI VISION RECOGNIZING", 2, 0xFF52E27E);
-    draw_text_rgb(fb, fw, fh, cam_x + cam_w - 150, cam_y + 16, "VISION 98MS", 1, 0xFF52E27E);
-    draw_text_rgb(fb, fw, fh, cam_x + 16, cam_y + cam_h - 28,
-                  "TIP PLACE ITEM IN VIEW", 1, 0xFFFFFFFF);
-
     snprintf(line, sizeof(line), "SCAN READY  AI VOICE  RUN %lldS",
              (long long)(uptime_ms / 1000));
-    draw_text_rgb(fb, fw, fh, cam_x + 16, cam_y + cam_h + 4, line, 1, 0xFFCED7DD);
+    (void)line;
 
-    categories_h = side_w >= 360 ? 210 : side_h / 3;
-    if (categories_h < 210) categories_h = 210;
-    cart_h = side_w >= 360 ? 170 : side_h / 4;
-    if (cart_h < 160) cart_h = 160;
+    categories_h = side_w >= 360 ? 236 : side_h / 3;
+    if (categories_h < 236) categories_h = 236;
+    cart_h = side_w >= 360 ? 210 : side_h / 4;
+    if (cart_h < 190) cart_h = 190;
     payment_h = side_h - categories_h - cart_h - gap * 2;
     if (payment_h < 180) payment_h = 180;
 
@@ -686,7 +828,7 @@ static void draw_retail_ui_overlay(const char *last_payload,
     draw_payment_panel(side_x, side_y + categories_h + cart_h + gap * 2,
                        side_w, payment_h, qr_count);
     draw_voice_dialog_panel(24, cam_y + cam_h + 24,
-                            side_x - 42, fh - (cam_y + cam_h + 48));
+                            side_x - 42, fh - (cam_y + cam_h + 84));
 }
 
 static void draw_qr_outline(const struct quirc_code *code,
