@@ -43,7 +43,7 @@ voice_cart_command() {
             printf 'clear\n'
             return
             ;;
-        *checkout*|*pay*|*payment*|*jiesuan*|*结账*|*支付*|*买单*|*付款*|*付钱*|*付一下*|*买好了*|*一共*多少钱*|*总共*多少钱*|*合计*|*总价*)
+        车|*checkout*|*pay*|*payment*|*jiesuan*|*结账*|*结帐*|*结算*|*算账*|*算帐*|*支付*|*买单*|*付款*|*付钱*|*付一下*|*买好了*|*一共*多少钱*|*总共*多少钱*|*合计*|*总价*)
             printf 'checkout\n'
             return
             ;;

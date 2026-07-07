@@ -168,7 +168,7 @@ class VoiceAutoListenScriptTest(unittest.TestCase):
         self.assertTrue(script.exists())
 
         text = script.read_text(encoding="utf-8", errors="ignore")
-        for keyword in ["付钱", "买好了", "付一下", "扫微信", "用微信", "扫支付宝", "用支付宝", "云闪付", "用银联"]:
+        for keyword in ["结账", "结帐", "结算", "买单", "车", "付钱", "买好了", "付一下", "扫微信", "用微信", "扫支付宝", "用支付宝", "云闪付", "用银联"]:
             with self.subTest(keyword=keyword):
                 self.assertIn(keyword, text)
 
