@@ -1644,7 +1644,7 @@ static void retail_speak_text_async(const char *text)
     }
     safe[j] = '\0';
     snprintf(cmd, sizeof(cmd),
-             "sh /userdata/Embed_project/scripts/run_voiceask_speaker.sh ask '%s' >/tmp/qsm_qr_speaker.log 2>&1 &",
+             "sh /userdata/Embed_project/scripts/run_voiceask_speaker.sh --speak-local-reply '%s' >/tmp/qsm_qr_speaker.log 2>&1 &",
              safe);
     system(cmd);
 }
@@ -2188,6 +2188,13 @@ static int decode_qr_candidates(struct quirc *qr,
             retail_note_qr_product_seen(product, qr_now_ms);
             if (have_display) {
                 draw_qr_outline(&code, cam_w, cam_h);
+            }
+            if (strcmp(payload, last) == 0) {
+                printf("\n>>> QR CODE: %s <<<\n", payload);
+                printf("    pass:%s ignored: same QR payload still visible\n",
+                       pass_name);
+                fflush(stdout);
+                continue;
             }
             if (!retail_product_can_add_from_qr(product, qr_now_ms)) {
                 printf("\n>>> QR CODE: %s <<<\n", payload);
@@ -2828,6 +2835,7 @@ int main(int argc, char **argv)
             g_qr_latched_product_id[0] &&
             qr_scan_now - g_qr_last_product_seen_ms >= QR_REARM_ABSENT_MS) {
             retail_reset_qr_product_latch();
+            last[0] = '\0';
         }
         saw_qr_this_frame = decoded_this_frame;
         (void)saw_qr_this_frame;

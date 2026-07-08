@@ -6,6 +6,25 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
 class VoiceAutoListenScriptTest(unittest.TestCase):
+    def test_boot_autostart_installer_creates_init_script_for_run_mission(self):
+        script = ROOT / "scripts" / "install_boot_autostart.sh"
+        self.assertTrue(script.exists())
+
+        text = script.read_text(encoding="utf-8", errors="ignore")
+        self.assertIn("/etc/init.d/S99embed_project", text)
+        self.assertIn("/userdata/Embed_project", text)
+        self.assertIn("scripts/run_mission.sh", text)
+        self.assertIn("/tmp/qsm_run_mission_boot.log", text)
+        self.assertIn("QSM_BOOT_DELAY_SECONDS", text)
+        self.assertIn("case \"${1:-start}\" in", text)
+        self.assertIn("start)", text)
+        self.assertIn("stop)", text)
+        self.assertIn("restart)", text)
+        self.assertIn("pkill -f \"scripts/start_voice_auto_listen.sh\"", text)
+        self.assertIn("pkill -f \"qr_scanner_display\"", text)
+        self.assertIn("mount -o remount,rw /", text)
+        self.assertIn("chmod +x \"$INIT_SCRIPT\"", text)
+
     def test_run_mission_starts_screen_and_voice(self):
         script = ROOT / "scripts" / "run_mission.sh"
         self.assertTrue(script.exists())

@@ -373,6 +373,20 @@ class QrDisplayStaticTests(unittest.TestCase):
         loop_pos = code.index("qr_scan_now >= g_qr_scan_resume_ms && !decoded_this_frame")
         self.assertGreater(reset_pos, loop_pos)
 
+    def test_qr_repeat_add_blocks_same_payload_until_absent_reset(self):
+        code = SRC.read_text(encoding="utf-8", errors="ignore")
+        decode_pos = code.index("static int decode_qr_candidates(")
+        decode_block = code[decode_pos: decode_pos + 2800]
+        self.assertIn("strcmp(payload, last) == 0", decode_block)
+        self.assertLess(
+            decode_block.index("strcmp(payload, last) == 0"),
+            decode_block.index("retail_product_can_add_from_qr(product, qr_now_ms)"),
+        )
+
+        reset_pos = code.index("retail_reset_qr_product_latch();")
+        reset_block = code[reset_pos: reset_pos + 260]
+        self.assertIn("last[0] = '\\0';", reset_block)
+
     def test_qr_outline_is_drawn_after_successful_product_decode_before_cooldown(self):
         code = SRC.read_text(encoding="utf-8", errors="ignore")
         decode_pos = code.index("static int decode_qr_candidates(")
@@ -404,6 +418,13 @@ class QrDisplayStaticTests(unittest.TestCase):
         self.assertIn('retail_push_voice_history("\u5ba2\u6237\uff1a\u626b\u7801\u8bc6\u522b")', speak_block)
         self.assertNotIn("QR recognized", speak_block)
         self.assertNotIn("added to cart.", speak_block)
+
+    def test_qr_product_speaker_uses_tts_only_not_voice_command(self):
+        code = SRC.read_text(encoding="utf-8", errors="ignore")
+        speak_pos = code.index("static void retail_speak_text_async(")
+        speak_block = code[speak_pos: speak_pos + 760]
+        self.assertIn("--speak-local-reply", speak_block)
+        self.assertNotIn("run_voiceask_speaker.sh ask", speak_block)
 
     def test_qr_luma_copy_respects_camera_stride(self):
         code = SRC.read_text(encoding="utf-8", errors="ignore")
