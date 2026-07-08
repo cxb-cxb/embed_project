@@ -214,6 +214,13 @@ local_cart_reply() {
     esac
 }
 
+start_async_local_cart_reply_tts() {
+    answer="$1"
+    printf "%s\n" "$$" > "$TTS_PLAYING_FILE"
+    nohup "$PROJECT_DIR/scripts/run_voiceask_speaker.sh" --speak-local-reply "$answer" \
+        >/tmp/qsm_local_cart_tts.log 2>&1 </dev/null &
+}
+
 play_local_cart_reply() {
     answer="$1"
     mode="${VOICE_FAST_CART_REPLY:-async}"
@@ -226,8 +233,7 @@ play_local_cart_reply() {
             ;;
         async|1|on|*)
             echo "Starting async local cart reply TTS."
-            nohup "$PROJECT_DIR/scripts/run_voiceask_speaker.sh" --speak-local-reply "$answer" \
-                >/tmp/qsm_local_cart_tts.log 2>&1 </dev/null &
+            start_async_local_cart_reply_tts "$answer"
             ;;
     esac
 }
@@ -262,8 +268,11 @@ ensure_network() {
 
 with_tts_playback_lock() {
     printf "%s\n" "$$" > "$TTS_PLAYING_FILE"
+    set +e
     "$@"
     rc=$?
+    set -e
+    sleep "${VOICE_TTS_POST_DELAY_SECONDS:-1.5}"
     rm -f "$TTS_PLAYING_FILE"
     return "$rc"
 }
@@ -793,7 +802,7 @@ prepare_speaker
 case "${1:-}" in
     --speak-local-reply)
         shift
-        play_text_tts "$*" || true
+        with_tts_playback_lock play_text_tts "$*" || true
         exit 0
         ;;
     --prepare-cache)

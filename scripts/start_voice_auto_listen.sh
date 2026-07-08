@@ -6,6 +6,7 @@ ENV_FILE="$PROJECT_DIR/config/voice_asr.env"
 BEEP_WAV="/tmp/qsm_voice_ready_beep.wav"
 WELCOME_MP3="$PROJECT_DIR/cache/welcome_tts.mp3"
 LOCK_DIR="${VOICE_LOCK_DIR:-/tmp/qsm_auto_voice.lock}"
+TTS_PLAYING_FILE="${TTS_PLAYING_FILE:-/tmp/qsm_tts_playing}"
 
 if [ -f "$ENV_FILE" ]; then
     # shellcheck disable=SC1090
@@ -67,6 +68,23 @@ play_cached_welcome() {
     fi
 }
 
+wait_for_tts_playback_idle() {
+    label="${1:-voice}"
+    waited=0
+    while [ -f "$TTS_PLAYING_FILE" ]; do
+        if [ "$waited" -eq 0 ]; then
+            echo "Waiting for TTS playback to finish before recording ${label}..."
+        fi
+        sleep 0.2
+        waited=$((waited + 1))
+        if [ "$waited" -ge "${VOICE_TTS_LOCK_MAX_TICKS:-80}" ]; then
+            echo "TTS playback lock timeout; clearing stale lock."
+            rm -f "$TTS_PLAYING_FILE"
+            break
+        fi
+    done
+}
+
 echo "Auto voice listener is starting. Wake word: 小智小智."
 prepare_audio
 if [ "${SKIP_BEEP:-1}" != "1" ]; then
@@ -80,6 +98,7 @@ fi
 echo "Auto voice listener is running. Say wake word first, then talk for ${VOICE_SESSION_SECONDS}s after '$WAKE_ACK_TEXT'. Press Ctrl+C to stop."
 
 while true; do
+    wait_for_tts_playback_idle wake
     prepare_audio
     echo "Listening for wake word..."
     "$PROJECT_DIR/scripts/run_voiceask_speaker.sh" --wake-once "$VOICE_WAKE_SECONDS" || true

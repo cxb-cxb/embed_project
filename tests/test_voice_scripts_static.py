@@ -195,6 +195,7 @@ class VoiceAutoListenScriptTest(unittest.TestCase):
         self.assertIn("with_tts_playback_lock()", text)
         self.assertIn("wait_for_tts_playback_idle()", text)
         self.assertIn('printf "%s\\n" "$$" > "$TTS_PLAYING_FILE"', text)
+        self.assertIn('sleep "${VOICE_TTS_POST_DELAY_SECONDS:-1.5}"', text)
         self.assertIn('rm -f "$TTS_PLAYING_FILE"', text)
         self.assertIn('wait_for_tts_playback_idle "$label"', text)
 
@@ -209,6 +210,36 @@ class VoiceAutoListenScriptTest(unittest.TestCase):
             recognize_block.index('wait_for_tts_playback_idle "$label"'),
             recognize_block.index("prepare_mic"),
         )
+
+    def test_async_tts_locks_before_auto_listener_can_record(self):
+        speaker_script = ROOT / "scripts" / "run_voiceask_speaker.sh"
+        auto_script = ROOT / "scripts" / "start_voice_auto_listen.sh"
+        self.assertTrue(speaker_script.exists())
+        self.assertTrue(auto_script.exists())
+
+        speaker_text = speaker_script.read_text(encoding="utf-8", errors="ignore")
+        auto_text = auto_script.read_text(encoding="utf-8", errors="ignore")
+
+        self.assertIn('start_async_local_cart_reply_tts()', speaker_text)
+        async_pos = speaker_text.index('start_async_local_cart_reply_tts()')
+        async_block = speaker_text[async_pos: async_pos + 620]
+        self.assertIn('printf "%s\\n" "$$" > "$TTS_PLAYING_FILE"', async_block)
+        self.assertIn('--speak-local-reply "$answer"', async_block)
+        self.assertLess(
+            async_block.index('printf "%s\\n" "$$" > "$TTS_PLAYING_FILE"'),
+            async_block.index('--speak-local-reply "$answer"'),
+        )
+
+        speak_case_pos = speaker_text.index('--speak-local-reply)')
+        speak_case_block = speaker_text[speak_case_pos: speak_case_pos + 180]
+        self.assertIn('with_tts_playback_lock play_text_tts "$*"', speak_case_block)
+
+        self.assertIn('TTS_PLAYING_FILE="${TTS_PLAYING_FILE:-/tmp/qsm_tts_playing}"', auto_text)
+        self.assertIn('wait_for_tts_playback_idle()', auto_text)
+        loop_pos = auto_text.index('while true; do')
+        loop_block = auto_text[loop_pos: loop_pos + 360]
+        self.assertIn('wait_for_tts_playback_idle wake', loop_block)
+        self.assertLess(loop_block.index('wait_for_tts_playback_idle wake'), loop_block.index('prepare_audio'))
 
     def test_payment_reply_echo_does_not_retrigger_payment_loop(self):
         script = ROOT / "scripts" / "run_voiceask_speaker.sh"
