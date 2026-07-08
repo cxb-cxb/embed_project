@@ -180,6 +180,9 @@ class VoiceAutoListenScriptTest(unittest.TestCase):
         self.assertIn("is_payment_reply_echo()", text)
         self.assertIn('if is_payment_reply_echo "$question"; then', text)
         self.assertIn("Ignoring payment reply echo.", text)
+        filter_pos = text.index("is_payment_reply_echo()")
+        filter_block = text[filter_pos: filter_pos + 520]
+        self.assertIn("请选择微信支付、支付宝支付或银联云闪付", filter_block)
 
         echo_pos = text.index('if is_payment_reply_echo "$question"; then')
         payment_pos = text.index('cart_cmd="$(voice_payment_method_command "$question")"')
@@ -189,6 +192,29 @@ class VoiceAutoListenScriptTest(unittest.TestCase):
         retail_block = text[retail_pos: retail_pos + 220]
         self.assertIn('run_open_chat_reply "$wake_text" || true', retail_block)
         self.assertNotIn("run_active_session", retail_block)
+
+    def test_checkout_keywords_cover_more_short_payment_phrases(self):
+        script = ROOT / "scripts" / "run_voiceask_speaker.sh"
+        self.assertTrue(script.exists())
+
+        text = script.read_text(encoding="utf-8", errors="ignore")
+        for keyword in ["结一下账", "帮我结账", "我要结账了", "算一下多少钱", "可以付款了", "我要付款", "我要买单", "支付一下"]:
+            with self.subTest(keyword=keyword):
+                self.assertIn(keyword, text)
+
+    def test_voice_recording_windows_are_long_enough_for_checkout(self):
+        speaker_config = ROOT / "scripts" / "configure_board_voice_speaker.sh"
+        auto_listen = ROOT / "scripts" / "start_voice_auto_listen.sh"
+        self.assertTrue(speaker_config.exists())
+        self.assertTrue(auto_listen.exists())
+
+        speaker_text = speaker_config.read_text(encoding="utf-8", errors="ignore")
+        auto_text = auto_listen.read_text(encoding="utf-8", errors="ignore")
+
+        self.assertIn("export VOICE_WAKE_SECONDS=3", speaker_text)
+        self.assertIn("export VOICE_COMMAND_SECONDS=7", speaker_text)
+        self.assertIn('VOICE_WAKE_SECONDS="${VOICE_WAKE_SECONDS:-3}"', auto_text)
+        self.assertIn('VOICE_COMMAND_SECONDS="${VOICE_COMMAND_SECONDS:-7}"', auto_text)
 
     def test_voice_state_keeps_utf8_chinese_for_ui(self):
         script = ROOT / "scripts" / "run_voiceask_speaker.sh"
@@ -253,8 +279,8 @@ class VoiceAutoListenScriptTest(unittest.TestCase):
         self.assertIn("export VOICE_SPK_VOLUME=200", text)
         self.assertIn("export VOICE_GAIN_DB=1", text)
         self.assertIn("export VOICE_SECONDS=4", text)
-        self.assertIn("export VOICE_WAKE_SECONDS=2", text)
-        self.assertIn("export VOICE_COMMAND_SECONDS=5", text)
+        self.assertIn("export VOICE_WAKE_SECONDS=3", text)
+        self.assertIn("export VOICE_COMMAND_SECONDS=7", text)
         self.assertIn("export VOICE_SESSION_SECONDS=60", text)
         self.assertIn('export WAKE_ACK_TEXT="我在"', text)
 

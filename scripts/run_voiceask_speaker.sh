@@ -43,7 +43,7 @@ voice_cart_command() {
             printf 'clear\n'
             return
             ;;
-        车|*checkout*|*pay*|*payment*|*jiesuan*|*结账*|*结帐*|*结算*|*算账*|*算帐*|*支付*|*买单*|*付款*|*付钱*|*付一下*|*买好了*|*一共*多少钱*|*总共*多少钱*|*合计*|*总价*)
+        车|*checkout*|*pay*|*payment*|*jiesuan*|*结账*|*结帐*|*结算*|*结一下账*|*帮我结账*|*我要结账了*|*算账*|*算帐*|*算一下多少钱*|*支付*|*支付一下*|*买单*|*我要买单*|*付款*|*我要付款*|*可以付款了*|*付钱*|*付一下*|*买好了*|*一共*多少钱*|*总共*多少钱*|*合计*|*总价*)
             printf 'checkout\n'
             return
             ;;
@@ -85,6 +85,7 @@ voice_payment_method_command() {
 is_payment_reply_echo() {
     q="$(printf '%s' "$1" | tr 'A-Z' 'a-z')"
     case "$q" in
+        *请选择微信支付、支付宝支付或银联云闪付*|*正在为您结账*请选择*|*正在为你结账*请选择*|\
         *好的*已为您打开*|*好的*已为你打开*|*已为您打开*收款码*|*已为你打开*收款码*|\
         *请扫码支付*)
             return 0
@@ -557,7 +558,7 @@ recognize_voice_once() {
 }
 
 run_voice_question_once() {
-    seconds="${1:-${VOICE_COMMAND_SECONDS:-5}}"
+    seconds="${1:-${VOICE_COMMAND_SECONDS:-7}}"
     question="$(recognize_voice_once "$seconds" command)"
     if [ -z "$question" ]; then
         echo "No speech recognized in active session."
@@ -578,14 +579,14 @@ run_active_session() {
         now="$(date +%s 2>/dev/null || echo 0)"
         [ "$now" -lt "$session_end" ] || break
         echo "Listening for question in active session..."
-        run_voice_question_once "${VOICE_COMMAND_SECONDS:-5}"
+        run_voice_question_once "${VOICE_COMMAND_SECONDS:-7}"
         sleep "${VOICE_SESSION_LOOP_PAUSE_SECONDS:-1}"
     done
     echo "Active voice session ended. Returning to wake word mode."
 }
 
 run_wake_once() {
-    wake_seconds="${1:-${VOICE_WAKE_SECONDS:-2}}"
+    wake_seconds="${1:-${VOICE_WAKE_SECONDS:-3}}"
     wake_text="$(recognize_voice_once "$wake_seconds" wake)"
 
     if [ -z "$wake_text" ]; then
@@ -757,7 +758,7 @@ case "${1:-}" in
         exit 0
         ;;
     --wake-once)
-        seconds="${2:-${VOICE_WAKE_SECONDS:-2}}"
+        seconds="${2:-${VOICE_WAKE_SECONDS:-3}}"
         run_wake_once "$seconds"
         exit 0
         ;;
