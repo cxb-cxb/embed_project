@@ -180,6 +180,25 @@ std::string CloudTtsClient::extractAudioData(const std::string& response_json) {
     return combined;
 }
 
+std::string CloudTtsClient::buildPlayCommand(const std::string& audio_path) {
+    const std::string lock_file = "/tmp/qsm_tts_playing";
+    const std::string play_log = "/tmp/embed_tts_play.log";
+    std::ostringstream command;
+    command << "sh -c " << shellQuote(
+        "lock_file=" + shellQuote(lock_file) +
+        "; lock_owner=$$" +
+        "; printf '%s\\n' \"$lock_owner\" > \"$lock_file\"" +
+        "; amixer -c 0 cset numid=1 2 >/dev/null 2>&1" +
+        "; amixer -c 0 cset numid=5 220,220 >/dev/null 2>&1" +
+        "; mpg123 -q " + shellQuote(audio_path) + " >" + shellQuote(play_log) + " 2>&1" +
+        "; rc=$?" +
+        "; sleep ${VOICE_TTS_POST_DELAY_SECONDS:-2.5}" +
+        "; current_owner=$(cat \"$lock_file\" 2>/dev/null || true)" +
+        "; [ \"$current_owner\" = \"$lock_owner\" ] && rm -f \"$lock_file\"" +
+        "; exit \"$rc\"");
+    return command.str();
+}
+
 bool CloudTtsClient::synthesizeToAudio(const CloudTtsConfig& config,
                                        const std::string& text,
                                        const std::string& audio_path) {
@@ -198,7 +217,5 @@ bool CloudTtsClient::synthesizeToAudio(const CloudTtsConfig& config,
 }
 
 bool CloudTtsClient::playAudio(const std::string& audio_path) {
-    std::system("amixer -c 0 cset numid=1 2 >/dev/null 2>&1");
-    std::system("amixer -c 0 cset numid=5 220,220 >/dev/null 2>&1");
-    return std::system(("mpg123 -q " + shellQuote(audio_path) + " >/tmp/embed_tts_play.log 2>&1").c_str()) == 0;
+    return std::system(CloudTtsClient::buildPlayCommand(audio_path).c_str()) == 0;
 }

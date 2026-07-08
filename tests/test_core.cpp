@@ -223,6 +223,23 @@ void test_cloud_tts_extracts_audio_data() {
     expect(data == "YWI=Yw==", "tts client should combine base64 audio chunks");
 }
 
+void test_cloud_tts_playback_command_holds_voice_input_lock() {
+    auto command = CloudTtsClient::buildPlayCommand("/tmp/reply.mp3");
+    expect(command.find("/tmp/qsm_tts_playing") != std::string::npos,
+           "tts playback command should use the shared voice input lock");
+    expect(command.find("lock_owner=$$") != std::string::npos,
+           "tts playback command should write its lock owner");
+    expect(command.find("mpg123 -q") != std::string::npos &&
+               command.find("/tmp/reply.mp3") != std::string::npos,
+           "tts playback command should play the requested audio");
+    expect(command.find("sleep ${VOICE_TTS_POST_DELAY_SECONDS:-2.5}") != std::string::npos,
+           "tts playback command should keep the mic muted briefly after playback");
+    expect(command.find("current_owner=$(cat \"$lock_file\"") != std::string::npos,
+           "tts playback command should check lock ownership before clearing it");
+    expect(command.find("[ \"$current_owner\" = \"$lock_owner\" ]") != std::string::npos,
+           "tts playback command should not clear another playback process lock");
+}
+
 }  // namespace
 
 int main() {
@@ -240,6 +257,7 @@ int main() {
         test_cloud_llm_extracts_assistant_text();
         test_cloud_tts_builds_request_command();
         test_cloud_tts_extracts_audio_data();
+        test_cloud_tts_playback_command_holds_voice_input_lock();
     } catch (const std::exception& ex) {
         std::cerr << "TEST FAILED: " << ex.what() << "\n";
         return EXIT_FAILURE;
