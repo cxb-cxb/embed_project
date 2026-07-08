@@ -155,6 +155,29 @@ class VoiceAutoListenScriptTest(unittest.TestCase):
         self.assertLess(cart_pos, open_pos)
         self.assertIn("Retail command:", text)
 
+    def test_retail_lexicon_has_priority_before_open_chat(self):
+        script = ROOT / "scripts" / "run_voiceask_speaker.sh"
+        self.assertTrue(script.exists())
+
+        text = script.read_text(encoding="utf-8", errors="ignore")
+        self.assertIn("retail_lexicon_command()", text)
+        self.assertIn("product_from_retail_lexicon()", text)
+        self.assertIn("Retail lexicon hit:", text)
+        self.assertIn('lexicon_cmd="$(retail_lexicon_command "$question")"', text)
+
+        lexicon_pos = text.index('lexicon_cmd="$(retail_lexicon_command "$question")"')
+        open_pos = text.index('answer="$(request_open_chat')
+        self.assertLess(lexicon_pos, open_pos)
+
+        for keyword in [
+            "可乐", "扣乐", "可落", "阔乐", "cola", "coke",
+            "牛奶", "奶", "矿泉水", "冰露", "面包", "泡面", "杯面",
+            "薯片", "薯条", "饼干", "曲奇", "牙膏", "纸巾", "抽纸", "香皂", "肥皂",
+            "多少钱", "价格", "库存", "推荐", "有啥", "来一个", "拿一个"
+        ]:
+            with self.subTest(keyword=keyword):
+                self.assertIn(keyword, text)
+
     def test_checkout_asks_for_payment_method_before_showing_code(self):
         script = ROOT / "scripts" / "run_voiceask_speaker.sh"
         self.assertTrue(script.exists())

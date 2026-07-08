@@ -84,6 +84,61 @@ voice_payment_method_command() {
     printf '\n'
 }
 
+product_from_retail_lexicon() {
+    q="$(printf '%s' "$1" | tr 'A-Z' 'a-z')"
+    case "$q" in
+        *cola*|*coke*|*可乐*|*扣乐*|*可落*|*阔乐*|*汽水*) printf 'cola\n'; return ;;
+        *milk*|*牛奶*|*奶*) printf 'milk\n'; return ;;
+        *water*|*矿泉水*|*冰露*|*水*) printf 'water\n'; return ;;
+        *bread*|*面包*|*吐司*) printf 'bread\n'; return ;;
+        *noodle*|*方便面*|*泡面*|*杯面*|*桶面*) printf 'noodle\n'; return ;;
+        *chips*|*薯片*|*薯条*) printf 'chips\n'; return ;;
+        *biscuit*|*cookie*|*cookies*|*饼干*|*曲奇*) printf 'biscuit\n'; return ;;
+        *toothpaste*|*牙膏*) printf 'toothpaste\n'; return ;;
+        *tissue*|*纸巾*|*抽纸*) printf 'tissue\n'; return ;;
+        *soap*|*香皂*|*肥皂*) printf 'soap\n'; return ;;
+    esac
+    printf '\n'
+}
+
+retail_lexicon_command() {
+    q="$(printf '%s' "$1" | tr 'A-Z' 'a-z')"
+
+    cmd="$(voice_payment_method_command "$q")"
+    if [ -n "$cmd" ]; then
+        printf '%s\n' "$cmd"
+        return
+    fi
+
+    cmd="$(voice_cart_command "$q")"
+    if [ -n "$cmd" ]; then
+        printf '%s\n' "$cmd"
+        return
+    fi
+
+    product="$(product_from_retail_lexicon "$q")"
+    if [ -n "$product" ]; then
+        case "$q" in
+            *多少钱*|*价格*|*价钱*|*库存*|*还有*|*有吗*|*有么*|*有啥*|*推荐*|*介绍*)
+                printf 'info:%s\n' "$product"
+                ;;
+            *加入*|*添加*|*购物车*|*来一个*|*来一*|*拿一个*|*拿一*|*买一个*|*买一*|*扫码*|*扫一下*|*)
+                printf 'add:%s\n' "$product"
+                ;;
+        esac
+        return
+    fi
+
+    case "$q" in
+        *商品*|*有什么*|*有啥*|*推荐*|*卖什么*|*售货机*)
+            printf 'info:products\n'
+            return
+            ;;
+    esac
+
+    printf '\n'
+}
+
 is_payment_reply_echo() {
     q="$(printf '%s' "$1" | tr 'A-Z' 'a-z')"
     case "$q" in
@@ -206,6 +261,50 @@ local_cart_reply() {
             ;;
         add:*)
             printf '%s\n' "好的，已加入购物车。"
+            return 0
+            ;;
+        info:cola)
+            printf '%s\n' "可乐3.50元，可以直接说把可乐加入购物车。"
+            return 0
+            ;;
+        info:milk)
+            printf '%s\n' "牛奶4.50元，可以直接说把牛奶加入购物车。"
+            return 0
+            ;;
+        info:water)
+            printf '%s\n' "矿泉水2.00元，可以直接说把水加入购物车。"
+            return 0
+            ;;
+        info:bread)
+            printf '%s\n' "面包5.00元，可以直接说把面包加入购物车。"
+            return 0
+            ;;
+        info:noodle)
+            printf '%s\n' "泡面4.00元，可以直接说把泡面加入购物车。"
+            return 0
+            ;;
+        info:chips)
+            printf '%s\n' "薯片6.00元，可以直接说把薯片加入购物车。"
+            return 0
+            ;;
+        info:biscuit)
+            printf '%s\n' "饼干5.50元，可以直接说把饼干加入购物车。"
+            return 0
+            ;;
+        info:toothpaste)
+            printf '%s\n' "牙膏8.00元，可以直接说把牙膏加入购物车。"
+            return 0
+            ;;
+        info:tissue)
+            printf '%s\n' "纸巾4.00元，可以直接说把纸巾加入购物车。"
+            return 0
+            ;;
+        info:soap)
+            printf '%s\n' "香皂3.00元，可以直接说把香皂加入购物车。"
+            return 0
+            ;;
+        info:products)
+            printf '%s\n' "目前有可乐、牛奶、水、面包、泡面、薯片、饼干、牙膏、纸巾和香皂。"
             return 0
             ;;
         *)
@@ -547,6 +646,28 @@ run_open_chat_reply() {
     [ -n "$question" ] || return 1
     if is_payment_reply_echo "$question"; then
         echo "Ignoring payment reply echo."
+        return 0
+    fi
+    lexicon_cmd="$(retail_lexicon_command "$question")"
+    if [ -n "$lexicon_cmd" ]; then
+        if [ "$lexicon_cmd" = "checkout" ]; then
+            lexicon_cmd="checkout_pending"
+            : > "$PAYMENT_WAIT_FILE"
+        elif [ "${lexicon_cmd#info:}" != "$lexicon_cmd" ]; then
+            :
+        else
+            rm -f "$PAYMENT_WAIT_FILE"
+        fi
+        answer="$(local_cart_reply "$lexicon_cmd")" || return 1
+        case "$lexicon_cmd" in
+            info:*) state_cmd="" ;;
+            *) state_cmd="$lexicon_cmd" ;;
+        esac
+        echo "Retail lexicon hit: question=$question command=$lexicon_cmd"
+        echo "Retail command: $lexicon_cmd"
+        echo "Assistant: $answer"
+        write_voice_state "$question" "$answer" "$state_cmd"
+        play_local_cart_reply "$answer" || true
         return 0
     fi
     cart_cmd="$(voice_payment_method_command "$question")"
