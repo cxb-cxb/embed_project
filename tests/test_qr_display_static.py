@@ -305,8 +305,8 @@ class QrDisplayStaticTests(unittest.TestCase):
             "retail_push_voice_history(",
             "draw_voice_history_panel(",
             "draw_text_utf8_wrapped_rgb(",
-            "客户:",
-            "AI:",
+            "客户：",
+            "AI：",
             "g_last_qr_payload",
             "g_last_qr_add_ms",
             "QR_REPEAT_ADD_COOLDOWN_MS",
@@ -317,10 +317,14 @@ class QrDisplayStaticTests(unittest.TestCase):
 
     def test_voice_panel_labels_customer_and_ai_and_sanitizes_mojibake(self):
         code = SRC.read_text(encoding="utf-8", errors="ignore")
+        assets = (ROOT / "src" / "retail_ui_assets.h").read_text(encoding="utf-8", errors="ignore")
 
         self.assertIn("static void sanitize_voice_text(", code)
         self.assertIn("strip_voice_role_prefix(", code)
         self.assertIn("replace_all_inplace(", code)
+        self.assertIn("#define VOICE_HISTORY_TEXT_MAX 192", code)
+        self.assertIn("g_voice_history[VOICE_HISTORY_LINES][VOICE_HISTORY_TEXT_MAX]", code)
+        self.assertIn("utf8_safe_copy(", code)
         self.assertIn("宸蹭负", code)
         self.assertIn("璇锋壂鐮", code)
 
@@ -328,15 +332,41 @@ class QrDisplayStaticTests(unittest.TestCase):
         apply_block = code[apply_pos: apply_pos + 1600]
         self.assertIn("sanitize_voice_text(question", apply_block)
         self.assertIn("sanitize_voice_text(answer", apply_block)
-        self.assertIn('format_prefixed_text(line_q, sizeof(line_q), "客户:", question)', apply_block)
-        self.assertIn('format_prefixed_text(line_a, sizeof(line_a), "AI:", answer)', apply_block)
+        self.assertIn("char line_q[VOICE_HISTORY_TEXT_MAX]", apply_block)
+        self.assertIn("char line_a[VOICE_HISTORY_TEXT_MAX]", apply_block)
+        self.assertIn('format_prefixed_text(line_q, sizeof(line_q), "客户：", question)', apply_block)
+        self.assertIn('format_prefixed_text(line_a, sizeof(line_a), "AI：", answer)', apply_block)
         self.assertNotIn('"问：%s"', apply_block)
         self.assertNotIn('"答：%s"', apply_block)
 
+        payment_pos = code.index('if (equals_ignore_case(cmd, "pay:wechat"))')
+        payment_block = code[payment_pos: payment_pos + 900]
+        self.assertIn('retail_push_voice_history("客户：微信支付")', payment_block)
+        self.assertIn('retail_push_voice_history("AI：已为您打开微信收款码，请扫码支付。")', payment_block)
+        self.assertIn('retail_push_voice_history("客户：支付宝支付")', payment_block)
+        self.assertIn('retail_push_voice_history("AI：已为您打开支付宝收款码，请扫码支付。")', payment_block)
+
         draw_pos = code.index("static void draw_voice_history_panel(")
         draw_block = code[draw_pos: draw_pos + 900]
-        self.assertIn('strstr(g_voice_history[i], "AI:")', draw_block)
+        self.assertIn("voice_line_content(", draw_block)
+        self.assertIn("draw_voice_label_rgb(", code)
+        self.assertIn('draw_text_utf8_rgb(fb, fw, fh, x, y, "ＡＩ：", 1, color)', code)
+        self.assertIn("draw_voice_text_wrapped_rgb(", draw_block)
+        self.assertIn("draw_voice_codepoint_rgb(", code)
+        self.assertIn("voice_fullwidth_codepoint(", code)
+        self.assertIn("sanitize_voice_history_line(", code)
+        self.assertIn("if (c == '?') continue;", code)
         self.assertNotIn('strstr(g_voice_history[i], "答：")', draw_block)
+
+        punctuation_codepoints = [
+            0x3001, 0x3002, 0xFF0C, 0xFF01, 0xFF1F, 0xFF1A, 0xFF1B,
+            0xFF08, 0xFF09, 0x3010, 0x3011, 0x300A, 0x300B,
+            0x201C, 0x201D, 0x2018, 0x2019, 0x300C, 0x300D,
+            0x300E, 0x300F, 0x2014, 0x2026, 0xFFE5, 0x00B7, 0xFF5E,
+        ]
+        for cp in punctuation_codepoints:
+            with self.subTest(punctuation_glyph=hex(cp)):
+                self.assertIn(f"{{0x{cp:04X},", assets)
 
 
 if __name__ == "__main__":
