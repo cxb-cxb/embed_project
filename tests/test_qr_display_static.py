@@ -167,7 +167,6 @@ class QrDisplayStaticTests(unittest.TestCase):
         code = SRC.read_text(encoding="utf-8", errors="ignore")
 
         for product_id in [
-            "cola",
             "noodle",
             "chips",
             "biscuit",
@@ -188,6 +187,18 @@ class QrDisplayStaticTests(unittest.TestCase):
         self.assertIn('"sku="', code)
         self.assertIn('"\\"product\\""', code)
         self.assertIn('"\\"id\\""', code)
+
+    def test_cola_product_is_disabled_from_qr_payload_recognition(self):
+        code = SRC.read_text(encoding="utf-8", errors="ignore")
+
+        self.assertIn("retail_product_is_enabled(", code)
+        self.assertIn('equals_ignore_case(product->id, "cola")', code)
+        self.assertIn("return 0;", code)
+
+        from_payload_pos = code.index("static const struct retail_product *retail_product_from_payload(")
+        from_payload_block = code[from_payload_pos: from_payload_pos + 1400]
+        self.assertIn("if (!retail_product_is_enabled(&g_products[i])) continue;", from_payload_block)
+        self.assertIn('{"cola", "Cola", "690100000002", 350}', code)
 
     def test_dynamic_cart_and_voice_state_are_used_by_ui(self):
         code = SRC.read_text(encoding="utf-8", errors="ignore")
@@ -373,6 +384,16 @@ class QrDisplayStaticTests(unittest.TestCase):
         self.assertIn("quirc_resize(qr_crop, cam_w, cam_h)", code)
         self.assertIn("crop_enhance_luma_for_qr(qb3, yp, cam_w, cam_h, g_y_stride, 88)", code)
         self.assertIn('continuous, "center88")', code)
+
+    def test_qr_decode_rotates_shifted_crop_fallbacks_for_edge_labels(self):
+        code = SRC.read_text(encoding="utf-8", errors="ignore")
+
+        self.assertIn("#define QR_SHIFTED_CROP_COUNT", code)
+        self.assertIn("struct qr_crop_region", code)
+        self.assertIn("g_qr_shifted_crops", code)
+        self.assertIn("crop_region_enhance_luma_for_qr(", code)
+        self.assertIn("g_qr_shifted_crops[frame % QR_SHIFTED_CROP_COUNT]", code)
+        self.assertIn('snprintf(pass_name, sizeof(pass_name), "shift%d"', code)
 
     def test_voice_panel_uses_scroll_history_and_qr_product_cooldown(self):
         code = SRC.read_text(encoding="utf-8", errors="ignore")

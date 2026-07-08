@@ -65,6 +65,7 @@
 #define VOICE_HISTORY_LINES 4
 #define VOICE_HISTORY_TEXT_MAX 192
 #define QR_PRODUCT_ADD_COOLDOWN_MS 20000
+#define QR_SHIFTED_CROP_COUNT 8
 #define PAYMENT_QR_W 360
 #define PAYMENT_QR_H 480
 #define PAYMENT_POPUP_MS 30000
@@ -129,6 +130,23 @@ static struct retail_cart_line g_cart[MAX_CART_ITEMS];
 static int g_cart_count = 0;
 
 static void sig_handler(int sig) { (void)sig; g_running = 0; }
+
+struct qr_crop_region {
+    int crop_percent;
+    int offset_x_percent;
+    int offset_y_percent;
+};
+
+static const struct qr_crop_region g_qr_shifted_crops[QR_SHIFTED_CROP_COUNT] = {
+    {76, -10,   0},
+    {76,  10,   0},
+    {76,   0, -10},
+    {76,   0,  10},
+    {68, -14, -10},
+    {68,  14, -10},
+    {68, -14,  10},
+    {68,  14,  10},
+};
 
 /* ── 工具函数 ────────────────────────────────────────────────────── */
 
@@ -257,6 +275,42 @@ static void crop_enhance_luma_for_qr(uint8_t *dst, const uint8_t *src,
 }
 
 /* ── NV12 → XRGB8888 软转 ────────────────────────────────────────── */
+
+static void crop_region_enhance_luma_for_qr(uint8_t *dst, const uint8_t *src,
+                                            int width, int height, int stride,
+                                            const struct qr_crop_region *region)
+{
+    int crop_percent = region ? region->crop_percent : 88;
+    int offset_x_percent = region ? region->offset_x_percent : 0;
+    int offset_y_percent = region ? region->offset_y_percent : 0;
+    int crop_w = width * crop_percent / 100;
+    int crop_h = height * crop_percent / 100;
+    int crop_x = (width - crop_w) / 2 + width * offset_x_percent / 100;
+    int crop_y = (height - crop_h) / 2 + height * offset_y_percent / 100;
+    uint8_t *tmp = malloc((size_t)width * (size_t)height);
+
+    if (crop_w <= 0 || crop_h <= 0) {
+        copy_luma_for_qr(dst, src, width, height, stride);
+        return;
+    }
+    crop_x = clamp_int(crop_x, 0, width - crop_w);
+    crop_y = clamp_int(crop_y, 0, height - crop_h);
+
+    for (int y = 0; y < height; y++) {
+        int sy = crop_y + (int)((int64_t)y * crop_h / height);
+        uint8_t *out = dst + y * width;
+        const uint8_t *row = src + sy * stride;
+        for (int x = 0; x < width; x++) {
+            int sx = crop_x + (int)((int64_t)x * crop_w / width);
+            out[x] = row[sx];
+        }
+    }
+    enhance_luma_for_qr(dst, dst, width, height, width);
+    if (tmp) {
+        sharpen_luma_for_qr(dst, tmp, width, height);
+        free(tmp);
+    }
+}
 
 static void nv12_to_xrgb(uint8_t *y, uint8_t *uv,
                           int w, int h, int ys, int uvs,
@@ -915,6 +969,13 @@ static int retail_payload_alias_matches(const char *value, const char *product_i
     return 0;
 }
 
+static int retail_product_is_enabled(const struct retail_product *product)
+{
+    if (!product) return 0;
+    if (equals_ignore_case(product->id, "cola")) return 0;
+    return 1;
+}
+
 static void retail_payload_extract_value(const char *payload, char *out, size_t out_sz)
 {
     const char *value = payload;
@@ -963,6 +1024,7 @@ static const struct retail_product *retail_product_from_payload(const char *payl
     if (!extracted[0]) return NULL;
 
     for (size_t i = 0; i < sizeof(g_products) / sizeof(g_products[0]); i++) {
+        if (!retail_product_is_enabled(&g_products[i])) continue;
         if (equals_ignore_case(value, g_products[i].id) ||
             equals_ignore_case(value, g_products[i].barcode) ||
             retail_payload_alias_matches(value, g_products[i].id)) {
@@ -2652,6 +2714,25 @@ int main(int argc, char **argv)
                                                               last, sizeof(last),
                                                               &found, &redraw_dashboard,
                                                               continuous, "center88");
+                }
+            }
+            if (!decoded_this_frame) {
+                int qw4, qh4;
+                char pass_name[32];
+                const struct qr_crop_region *region =
+                    &g_qr_shifted_crops[frame % QR_SHIFTED_CROP_COUNT];
+                uint8_t *qb4 = quirc_begin(qr_crop, &qw4, &qh4);
+                if (qb4 && qw4 == (int)cam_w && qh4 == (int)cam_h) {
+                    crop_region_enhance_luma_for_qr(qb4, yp, cam_w, cam_h,
+                                                    g_y_stride, region);
+                    quirc_end(qr_crop);
+                    snprintf(pass_name, sizeof(pass_name), "shift%d",
+                             (int)(frame % QR_SHIFTED_CROP_COUNT));
+                    decoded_this_frame = decode_qr_candidates(qr_crop, cam_w, cam_h,
+                                                              have_display,
+                                                              last, sizeof(last),
+                                                              &found, &redraw_dashboard,
+                                                              continuous, pass_name);
                 }
             }
         }

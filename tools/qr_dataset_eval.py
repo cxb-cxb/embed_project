@@ -54,6 +54,25 @@ def center_crops(img):
         left = (w - cw) // 2
         top = (h - ch) // 2
         crops.append((f"center{pct}", img.crop((left, top, left + cw, top + ch))))
+    for idx, (pct, ox_pct, oy_pct) in enumerate(
+        (
+            (76, -10, 0),
+            (76, 10, 0),
+            (76, 0, -10),
+            (76, 0, 10),
+            (68, -14, -10),
+            (68, 14, -10),
+            (68, -14, 10),
+            (68, 14, 10),
+        )
+    ):
+        cw = w * pct // 100
+        ch = h * pct // 100
+        left = (w - cw) // 2 + w * ox_pct // 100
+        top = (h - ch) // 2 + h * oy_pct // 100
+        left = max(0, min(w - cw, left))
+        top = max(0, min(h - ch, top))
+        crops.append((f"shift{idx}", img.crop((left, top, left + cw, top + ch))))
     return crops
 
 
