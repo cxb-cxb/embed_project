@@ -220,9 +220,10 @@ class VoiceAutoListenScriptTest(unittest.TestCase):
         speaker_text = speaker_config.read_text(encoding="utf-8", errors="ignore")
         auto_text = auto_listen.read_text(encoding="utf-8", errors="ignore")
 
-        self.assertIn("export VOICE_WAKE_SECONDS=3", speaker_text)
+        self.assertIn("export VOICE_WAKE_SECONDS=5", speaker_text)
         self.assertIn("export VOICE_COMMAND_SECONDS=7", speaker_text)
-        self.assertIn('VOICE_WAKE_SECONDS="${VOICE_WAKE_SECONDS:-3}"', auto_text)
+        self.assertIn("export VOICE_LOOP_PAUSE_SECONDS=0.1", speaker_text)
+        self.assertIn('VOICE_WAKE_SECONDS="${VOICE_WAKE_SECONDS:-5}"', auto_text)
         self.assertIn('VOICE_COMMAND_SECONDS="${VOICE_COMMAND_SECONDS:-7}"', auto_text)
 
     def test_voice_state_keeps_utf8_chinese_for_ui(self):
@@ -250,6 +251,9 @@ class VoiceAutoListenScriptTest(unittest.TestCase):
         self.assertIn('voice_cart_command "$wake_text"', text)
         self.assertIn('voice_payment_method_command "$wake_text"', text)
         self.assertIn("run_voice_question_once", text)
+        for wake_variant in ["小志", "晓智", "小芝", "小只"]:
+            with self.subTest(wake_variant=wake_variant):
+                self.assertIn(wake_variant, text)
 
     def test_voiceask_uses_cached_wake_ack_and_two_minute_session(self):
         script = ROOT / "scripts" / "run_voiceask_speaker.sh"
@@ -288,8 +292,9 @@ class VoiceAutoListenScriptTest(unittest.TestCase):
         self.assertIn("export VOICE_SPK_VOLUME=200", text)
         self.assertIn("export VOICE_GAIN_DB=1", text)
         self.assertIn("export VOICE_SECONDS=4", text)
-        self.assertIn("export VOICE_WAKE_SECONDS=3", text)
+        self.assertIn("export VOICE_WAKE_SECONDS=5", text)
         self.assertIn("export VOICE_COMMAND_SECONDS=7", text)
+        self.assertIn("export VOICE_LOOP_PAUSE_SECONDS=0.1", text)
         self.assertIn("export VOICE_SESSION_SECONDS=60", text)
         self.assertIn('export WAKE_ACK_TEXT="我在"', text)
 

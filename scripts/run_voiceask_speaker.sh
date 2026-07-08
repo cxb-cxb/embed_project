@@ -12,7 +12,7 @@ WAKE_ACK_WAV="$CACHE_DIR/wake_ack_tts.wav"
 WELCOME_TEXT="${WELCOME_TEXT:-欢迎来到智能售货机。}"
 VOICE_STATE_FILE="${VOICE_STATE_FILE:-/tmp/qsm_retail_voice_state}"
 PAYMENT_WAIT_FILE="${PAYMENT_WAIT_FILE:-/tmp/qsm_payment_waiting_method}"
-VOICE_WAKE_WORDS="${VOICE_WAKE_WORDS:-小智小智|小智|智能售货机|售货机}"
+VOICE_WAKE_WORDS="${VOICE_WAKE_WORDS:-小智小智|小智|小知|小志|晓智|小芝|小只|智能售货机|售货机}"
 WAKE_ACK_TEXT="${WAKE_ACK_TEXT:-我在}"
 
 if [ -f "$ASR_ENV" ]; then
@@ -102,7 +102,7 @@ is_payment_reply_echo() {
 is_wake_text() {
     q="$(printf '%s' "$1" | tr 'A-Z' 'a-z')"
     case "$q" in
-        *语音助手*|*你好助手*|*小智*|*小知*|*智慧零售*|*售货机*|*智能售货机*|\
+        *语音助手*|*你好助手*|*小智*|*小知*|*小志*|*晓智*|*小芝*|*小只*|*智慧零售*|*售货机*|*智能售货机*|\
         *voice*assistant*|*hello*assistant*|*xiao*zhi*|*xiaozhi*|*assistant*)
             return 0
             ;;
@@ -118,6 +118,10 @@ extract_wake_command() {
         -e 's/你好助手//g' \
         -e 's/小智//g' \
         -e 's/小知//g' \
+        -e 's/小志//g' \
+        -e 's/晓智//g' \
+        -e 's/小芝//g' \
+        -e 's/小只//g' \
         -e 's/智慧零售//g' \
         -e 's/智能售货机//g' \
         -e 's/售货机//g' \
@@ -586,7 +590,7 @@ run_active_session() {
 }
 
 run_wake_once() {
-    wake_seconds="${1:-${VOICE_WAKE_SECONDS:-3}}"
+    wake_seconds="${1:-${VOICE_WAKE_SECONDS:-5}}"
     wake_text="$(recognize_voice_once "$wake_seconds" wake)"
 
     if [ -z "$wake_text" ]; then
@@ -672,7 +676,7 @@ run_embed_command() {
             ensure_dns
             prepare_mic
             if [ "$mode" = "wake_only" ]; then
-                echo "请说唤醒词“小智小智”。录音 ${VOICE_WAKE_SECONDS:-3} 秒..."
+                echo "请说唤醒词“小智小智”。录音 ${VOICE_WAKE_SECONDS:-5} 秒..."
             elif [ "$require_wake" -eq 1 ]; then
                 echo "请先说唤醒词“小智小智”，再提出问题。录音 ${VOICE_SECONDS:-8} 秒..."
             else
@@ -758,13 +762,13 @@ case "${1:-}" in
         exit 0
         ;;
     --wake-once)
-        seconds="${2:-${VOICE_WAKE_SECONDS:-3}}"
+        seconds="${2:-${VOICE_WAKE_SECONDS:-5}}"
         run_wake_once "$seconds"
         exit 0
         ;;
     --once)
         seconds="${2:-${VOICE_SECONDS:-8}}"
-        wake_seconds="${VOICE_WAKE_SECONDS:-3}"
+        wake_seconds="${VOICE_WAKE_SECONDS:-5}"
         if run_embed_command "voiceask $wake_seconds" wake_only; then
             play_wake_beep
             run_embed_command "voiceask $seconds" no_wake

@@ -12,7 +12,7 @@ if [ -f "$ENV_FILE" ]; then
     . "$ENV_FILE"
 fi
 
-VOICE_WAKE_SECONDS="${VOICE_WAKE_SECONDS:-3}"
+VOICE_WAKE_SECONDS="${VOICE_WAKE_SECONDS:-5}"
 VOICE_COMMAND_SECONDS="${VOICE_COMMAND_SECONDS:-7}"
 VOICE_SESSION_SECONDS="${VOICE_SESSION_SECONDS:-60}"
 WAKE_ACK_TEXT="${WAKE_ACK_TEXT:-我在}"
@@ -83,5 +83,5 @@ while true; do
     prepare_audio
     echo "Listening for wake word..."
     "$PROJECT_DIR/scripts/run_voiceask_speaker.sh" --wake-once "$VOICE_WAKE_SECONDS" || true
-    sleep "${VOICE_LOOP_PAUSE_SECONDS:-1}"
+    sleep "${VOICE_LOOP_PAUSE_SECONDS:-0.1}"
 done
