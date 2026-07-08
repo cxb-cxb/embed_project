@@ -33,9 +33,24 @@ class VoiceAutoListenScriptTest(unittest.TestCase):
         self.assertIn("start_retail_lvds_ui.sh", text)
         self.assertIn("start_voice_auto_listen.sh", text)
         self.assertIn("configure_board_voice_speaker.sh", text)
+        self.assertIn("connect_wifi.sh", text)
         self.assertIn("/tmp/qsm_auto_voice.log", text)
         self.assertIn("/tmp/qsm_auto_voice.pid", text)
         self.assertIn("run_mission is ready", text)
+
+        wifi_pos = text.index("[mission] connecting Wi-Fi")
+        voice_pos = text.index("[mission] starting voice listener")
+        self.assertLess(wifi_pos, voice_pos)
+
+    def test_connect_wifi_waits_for_slow_phone_hotspot_association(self):
+        script = ROOT / "scripts" / "connect_wifi.sh"
+        self.assertTrue(script.exists())
+
+        text = script.read_text(encoding="utf-8", errors="ignore")
+        self.assertIn("WIFI_CONNECT_TIMEOUT_SECONDS", text)
+        self.assertIn("while [ \"$waited\" -lt \"$connect_timeout\" ]; do", text)
+        self.assertIn('wpa_state="$(wpa_cli -p /var/run/wpa_supplicant -i "$WIFI_IFACE" status', text)
+        self.assertIn('[ "$wpa_state" = "COMPLETED" ] && break', text)
 
     def test_payment_done_enter_script_triggers_ui_reset_file(self):
         script = ROOT / "scripts" / "payment_done_enter.sh"

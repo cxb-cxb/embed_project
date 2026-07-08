@@ -12,6 +12,7 @@ fi
 WIFI_IFACE="${WIFI_IFACE:-wlan0}"
 WIFI_SSID="${WIFI_SSID:-}"
 WIFI_PASSWORD="${WIFI_PASSWORD:-}"
+connect_timeout="${WIFI_CONNECT_TIMEOUT_SECONDS:-35}"
 
 if [ -z "$WIFI_SSID" ] || [ -z "$WIFI_PASSWORD" ]; then
     echo "Missing WIFI_SSID or WIFI_PASSWORD in $WIFI_ENV"
@@ -34,9 +35,15 @@ ifconfig "$WIFI_IFACE" up
 chmod 600 "$PROJECT_DIR/config/wpa_supplicant.conf"
 
 wpa_supplicant -B -i "$WIFI_IFACE" -c "$PROJECT_DIR/config/wpa_supplicant.conf"
-sleep 8
+waited=0
+wpa_state=""
+while [ "$waited" -lt "$connect_timeout" ]; do
+    sleep 1
+    waited=$((waited + 1))
+    wpa_state="$(wpa_cli -p /var/run/wpa_supplicant -i "$WIFI_IFACE" status | sed -n 's/^wpa_state=//p')"
+    [ "$wpa_state" = "COMPLETED" ] && break
+done
 
-wpa_state="$(wpa_cli -p /var/run/wpa_supplicant -i "$WIFI_IFACE" status | sed -n 's/^wpa_state=//p')"
 if [ "$wpa_state" != "COMPLETED" ]; then
     echo "Wi-Fi association failed. Current state: $wpa_state"
     wpa_cli -p /var/run/wpa_supplicant -i "$WIFI_IFACE" scan_results || true

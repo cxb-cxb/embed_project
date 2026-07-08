@@ -32,6 +32,11 @@ if [ -x "$SCRIPT_DIR/configure_board_voice_speaker.sh" ]; then
     "$SCRIPT_DIR/configure_board_voice_speaker.sh" || true
 fi
 
+echo "[mission] connecting Wi-Fi..."
+if [ -x "$SCRIPT_DIR/connect_wifi.sh" ]; then
+    "$SCRIPT_DIR/connect_wifi.sh" || true
+fi
+
 echo "[mission] starting retail screen..."
 "$SCRIPT_DIR/start_retail_lvds_ui.sh"
 
