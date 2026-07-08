@@ -12,6 +12,7 @@ WAKE_ACK_WAV="$CACHE_DIR/wake_ack_tts.wav"
 WELCOME_TEXT="${WELCOME_TEXT:-欢迎来到智能售货机。}"
 VOICE_STATE_FILE="${VOICE_STATE_FILE:-/tmp/qsm_retail_voice_state}"
 PAYMENT_WAIT_FILE="${PAYMENT_WAIT_FILE:-/tmp/qsm_payment_waiting_method}"
+TTS_PLAYING_FILE="${TTS_PLAYING_FILE:-/tmp/qsm_tts_playing}"
 VOICE_WAKE_WORDS="${VOICE_WAKE_WORDS:-小智小智|小智|小知|小志|晓智|小芝|小只|智能售货机|售货机|信息机|智能售后}"
 WAKE_ACK_TEXT="${WAKE_ACK_TEXT:-我在}"
 
@@ -70,7 +71,8 @@ voice_payment_method_command() {
             printf 'pay:wechat\n'
             return
             ;;
-        *alipay*|*支付宝*|*支付寶*|*扫支付宝*|*用支付宝*)
+        *alipay*|*支付宝*|*支付寶*|*扫支付宝*|*用支付宝*|*支付宝支付*|*支付宝码*|*支付宝收款码*|\
+        *宝支付*|*之付宝*|*支护宝*|*蓝色支付*|*用蓝色的*|*蓝色的码*|*扫蓝色的*)
             printf 'pay:alipay\n'
             return
             ;;
@@ -258,6 +260,31 @@ ensure_network() {
     fi
 }
 
+with_tts_playback_lock() {
+    printf "%s\n" "$$" > "$TTS_PLAYING_FILE"
+    "$@"
+    rc=$?
+    rm -f "$TTS_PLAYING_FILE"
+    return "$rc"
+}
+
+wait_for_tts_playback_idle() {
+    label="${1:-voice}"
+    waited=0
+    while [ -f "$TTS_PLAYING_FILE" ]; do
+        if [ "$waited" -eq 0 ]; then
+            echo "Waiting for TTS playback to finish before recording ${label}..." >&2
+        fi
+        sleep 0.2
+        waited=$((waited + 1))
+        if [ "$waited" -ge "${VOICE_TTS_LOCK_MAX_TICKS:-80}" ]; then
+            echo "TTS playback lock timeout; clearing stale lock." >&2
+            rm -f "$TTS_PLAYING_FILE"
+            break
+        fi
+    done
+}
+
 dechunk_http_body() {
     raw="$1"
     out="$2"
@@ -299,7 +326,7 @@ decode_latest_tts() {
     printf '%s\n' "$mp3"
 }
 
-play_mp3() {
+play_mp3_unlocked() {
     mp3="$1"
     raw_wav="/tmp/embed_tts_reply_raw.wav"
     wav="/tmp/embed_tts_reply_fixed.wav"
@@ -335,11 +362,19 @@ play_mp3() {
     fi
 }
 
-play_wav_file() {
+play_mp3() {
+    with_tts_playback_lock play_mp3_unlocked "$@"
+}
+
+play_wav_file_unlocked() {
     wav="$1"
     prepare_speaker
     echo "Speaker playback: $wav channel=${VOICE_CHANNEL:-left}"
     tinyplay "$wav" -D 0 -d 0 || aplay -D hw:0,0 "$wav"
+}
+
+play_wav_file() {
+    with_tts_playback_lock play_wav_file_unlocked "$@"
 }
 
 play_latest_tts() {
@@ -556,6 +591,7 @@ recognize_voice_once() {
     log="/tmp/embed_project_${label}.log"
     rm -f "$log"
 
+    wait_for_tts_playback_idle "$label"
     ensure_dns
     prepare_mic
     echo "Listening for ${label}. Recording ${seconds} seconds..." >&2
@@ -675,6 +711,7 @@ run_embed_command() {
         voiceask*)
             require_wake=1
             [ "$mode" = "no_wake" ] && require_wake=0
+            wait_for_tts_playback_idle "$mode"
             ensure_dns
             prepare_mic
             if [ "$mode" = "wake_only" ]; then

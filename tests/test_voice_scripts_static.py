@@ -177,9 +177,38 @@ class VoiceAutoListenScriptTest(unittest.TestCase):
         self.assertTrue(script.exists())
 
         text = script.read_text(encoding="utf-8", errors="ignore")
-        for keyword in ["结账", "结帐", "结算", "买单", "车", "付钱", "买好了", "付一下", "扫微信", "用微信", "扫支付宝", "用支付宝", "云闪付", "用银联"]:
+        for keyword in [
+            "结账", "结帐", "结算", "买单", "车", "付钱", "买好了", "付一下",
+            "扫微信", "用微信", "扫支付宝", "用支付宝", "支付宝码", "支付宝收款码",
+            "宝支付", "之付宝", "支护宝", "蓝色支付", "用蓝色的",
+            "云闪付", "用银联"
+        ]:
             with self.subTest(keyword=keyword):
                 self.assertIn(keyword, text)
+
+    def test_tts_playback_blocks_microphone_recording(self):
+        script = ROOT / "scripts" / "run_voiceask_speaker.sh"
+        self.assertTrue(script.exists())
+
+        text = script.read_text(encoding="utf-8", errors="ignore")
+        self.assertIn('TTS_PLAYING_FILE="${TTS_PLAYING_FILE:-/tmp/qsm_tts_playing}"', text)
+        self.assertIn("with_tts_playback_lock()", text)
+        self.assertIn("wait_for_tts_playback_idle()", text)
+        self.assertIn('printf "%s\\n" "$$" > "$TTS_PLAYING_FILE"', text)
+        self.assertIn('rm -f "$TTS_PLAYING_FILE"', text)
+        self.assertIn('wait_for_tts_playback_idle "$label"', text)
+
+        play_pos = text.index("play_wav_file()")
+        play_block = text[play_pos: play_pos + 360]
+        self.assertIn("with_tts_playback_lock", play_block)
+
+        recognize_pos = text.index("recognize_voice_once()")
+        recognize_block = text[recognize_pos: recognize_pos + 420]
+        self.assertIn('wait_for_tts_playback_idle "$label"', recognize_block)
+        self.assertLess(
+            recognize_block.index('wait_for_tts_playback_idle "$label"'),
+            recognize_block.index("prepare_mic"),
+        )
 
     def test_payment_reply_echo_does_not_retrigger_payment_loop(self):
         script = ROOT / "scripts" / "run_voiceask_speaker.sh"
