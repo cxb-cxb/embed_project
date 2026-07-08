@@ -251,7 +251,7 @@ class VoiceAutoListenScriptTest(unittest.TestCase):
         self.assertIn('voice_cart_command "$wake_text"', text)
         self.assertIn('voice_payment_method_command "$wake_text"', text)
         self.assertIn("run_voice_question_once", text)
-        for wake_variant in ["小志", "晓智", "小芝", "小只"]:
+        for wake_variant in ["小志", "晓智", "小芝", "小只", "信息机", "智能售后"]:
             with self.subTest(wake_variant=wake_variant):
                 self.assertIn(wake_variant, text)
 

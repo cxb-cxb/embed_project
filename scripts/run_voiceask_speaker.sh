@@ -12,7 +12,7 @@ WAKE_ACK_WAV="$CACHE_DIR/wake_ack_tts.wav"
 WELCOME_TEXT="${WELCOME_TEXT:-欢迎来到智能售货机。}"
 VOICE_STATE_FILE="${VOICE_STATE_FILE:-/tmp/qsm_retail_voice_state}"
 PAYMENT_WAIT_FILE="${PAYMENT_WAIT_FILE:-/tmp/qsm_payment_waiting_method}"
-VOICE_WAKE_WORDS="${VOICE_WAKE_WORDS:-小智小智|小智|小知|小志|晓智|小芝|小只|智能售货机|售货机}"
+VOICE_WAKE_WORDS="${VOICE_WAKE_WORDS:-小智小智|小智|小知|小志|晓智|小芝|小只|智能售货机|售货机|信息机|智能售后}"
 WAKE_ACK_TEXT="${WAKE_ACK_TEXT:-我在}"
 
 if [ -f "$ASR_ENV" ]; then
@@ -102,7 +102,7 @@ is_payment_reply_echo() {
 is_wake_text() {
     q="$(printf '%s' "$1" | tr 'A-Z' 'a-z')"
     case "$q" in
-        *语音助手*|*你好助手*|*小智*|*小知*|*小志*|*晓智*|*小芝*|*小只*|*智慧零售*|*售货机*|*智能售货机*|\
+        *语音助手*|*你好助手*|*小智*|*小知*|*小志*|*晓智*|*小芝*|*小只*|*智慧零售*|*售货机*|*智能售货机*|*信息机*|*智能售后*|\
         *voice*assistant*|*hello*assistant*|*xiao*zhi*|*xiaozhi*|*assistant*)
             return 0
             ;;
@@ -125,6 +125,8 @@ extract_wake_command() {
         -e 's/智慧零售//g' \
         -e 's/智能售货机//g' \
         -e 's/售货机//g' \
+        -e 's/信息机//g' \
+        -e 's/智能售后//g' \
         -e 's/voice assistant//g' \
         -e 's/hello assistant//g' \
         -e 's/xiao zhi//g' \

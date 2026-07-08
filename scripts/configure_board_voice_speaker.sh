@@ -23,7 +23,7 @@ export VOICE_WAKE_SECONDS=5
 export VOICE_COMMAND_SECONDS=7
 export VOICE_SESSION_SECONDS=60
 export VOICE_LOOP_PAUSE_SECONDS=0.1
-export VOICE_WAKE_WORDS="小智小智|小智|小知|小志|晓智|小芝|小只|智能售货机|售货机"
+export VOICE_WAKE_WORDS="小智小智|小智|小知|小志|晓智|小芝|小只|智能售货机|售货机|信息机|智能售后"
 export WAKE_ACK_TEXT="我在"
 export SKIP_WELCOME=0
 EOF
