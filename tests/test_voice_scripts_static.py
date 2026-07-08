@@ -48,6 +48,7 @@ class VoiceAutoListenScriptTest(unittest.TestCase):
 
         text = script.read_text(encoding="utf-8", errors="ignore")
         self.assertIn("WIFI_CONNECT_TIMEOUT_SECONDS", text)
+        self.assertIn('connect_timeout="${WIFI_CONNECT_TIMEOUT_SECONDS:-75}"', text)
         self.assertIn("while [ \"$waited\" -lt \"$connect_timeout\" ]; do", text)
         self.assertIn('wpa_state="$(wpa_cli -p /var/run/wpa_supplicant -i "$WIFI_IFACE" status', text)
         self.assertIn('[ "$wpa_state" = "COMPLETED" ] && break', text)

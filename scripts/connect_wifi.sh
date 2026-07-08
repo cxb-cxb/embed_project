@@ -12,7 +12,7 @@ fi
 WIFI_IFACE="${WIFI_IFACE:-wlan0}"
 WIFI_SSID="${WIFI_SSID:-}"
 WIFI_PASSWORD="${WIFI_PASSWORD:-}"
-connect_timeout="${WIFI_CONNECT_TIMEOUT_SECONDS:-35}"
+connect_timeout="${WIFI_CONNECT_TIMEOUT_SECONDS:-75}"
 
 if [ -z "$WIFI_SSID" ] || [ -z "$WIFI_PASSWORD" ]; then
     echo "Missing WIFI_SSID or WIFI_PASSWORD in $WIFI_ENV"
