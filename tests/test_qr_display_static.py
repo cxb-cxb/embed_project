@@ -305,8 +305,8 @@ class QrDisplayStaticTests(unittest.TestCase):
             "retail_push_voice_history(",
             "draw_voice_history_panel(",
             "draw_text_utf8_wrapped_rgb(",
-            "问：",
-            "答：",
+            "客户:",
+            "AI:",
             "g_last_qr_payload",
             "g_last_qr_add_ms",
             "QR_REPEAT_ADD_COOLDOWN_MS",
@@ -314,6 +314,29 @@ class QrDisplayStaticTests(unittest.TestCase):
         ]:
             with self.subTest(symbol=symbol):
                 self.assertIn(symbol, code)
+
+    def test_voice_panel_labels_customer_and_ai_and_sanitizes_mojibake(self):
+        code = SRC.read_text(encoding="utf-8", errors="ignore")
+
+        self.assertIn("static void sanitize_voice_text(", code)
+        self.assertIn("strip_voice_role_prefix(", code)
+        self.assertIn("replace_all_inplace(", code)
+        self.assertIn("宸蹭负", code)
+        self.assertIn("璇锋壂鐮", code)
+
+        apply_pos = code.index("static int retail_apply_voice_state(void)")
+        apply_block = code[apply_pos: apply_pos + 1600]
+        self.assertIn("sanitize_voice_text(question", apply_block)
+        self.assertIn("sanitize_voice_text(answer", apply_block)
+        self.assertIn('format_prefixed_text(line_q, sizeof(line_q), "客户:", question)', apply_block)
+        self.assertIn('format_prefixed_text(line_a, sizeof(line_a), "AI:", answer)', apply_block)
+        self.assertNotIn('"问：%s"', apply_block)
+        self.assertNotIn('"答：%s"', apply_block)
+
+        draw_pos = code.index("static void draw_voice_history_panel(")
+        draw_block = code[draw_pos: draw_pos + 900]
+        self.assertIn('strstr(g_voice_history[i], "AI:")', draw_block)
+        self.assertNotIn('strstr(g_voice_history[i], "答：")', draw_block)
 
 
 if __name__ == "__main__":

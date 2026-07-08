@@ -111,8 +111,8 @@ static time_t         g_voice_state_mtime = 0;
 static char           g_voice_question[160] = "等待唤醒词";
 static char           g_voice_answer[160] = "请说小智小智后提问";
 static char           g_voice_history[VOICE_HISTORY_LINES][96] = {
-    "提示：请说小智小智",
-    "问答区等待刷新",
+    "AI:请说智能售货机",
+    "客户:等待询问",
     "",
     ""
 };
@@ -478,7 +478,10 @@ static int draw_codepoint_rgb(uint32_t *fb, int fw, int fh,
         return 6 * scale;
     }
     const struct ui_glyph24 *glyph = find_ui_glyph(cp);
-    if (!glyph) return 13 * scale;
+    if (!glyph) {
+        draw_char_rgb(fb, fw, fh, x, y + scale * 2, '?', scale, color);
+        return 6 * scale;
+    }
     int pixel = scale;
     for (int row = 0; row < UI_GLYPH_H; row++) {
         uint32_t bits = glyph->rows[row];
@@ -516,7 +519,7 @@ static void draw_text_utf8_shadow_rgb(uint32_t *fb, int fw, int fh,
 static int utf8_codepoint_width(uint32_t cp, int scale)
 {
     if (cp < 0x80) return 6 * scale;
-    if (!find_ui_glyph(cp)) return 13 * scale;
+    if (!find_ui_glyph(cp)) return 6 * scale;
     return (UI_GLYPH_W + 2) * scale;
 }
 
@@ -868,6 +871,111 @@ static void retail_checkout_summary(char *out, size_t out_sz)
              retail_cart_item_count(), total);
 }
 
+static void replace_all_inplace(char *text, size_t text_sz,
+                                const char *needle,
+                                const char *replacement)
+{
+    char tmp[256];
+    char *hit;
+    size_t before_len;
+    size_t needle_len;
+    size_t repl_len;
+    size_t tail_len;
+
+    if (!text || !needle || !replacement || !needle[0]) return;
+    needle_len = strlen(needle);
+    repl_len = strlen(replacement);
+
+    while ((hit = strstr(text, needle)) != NULL) {
+        before_len = (size_t)(hit - text);
+        tail_len = strlen(hit + needle_len);
+        if (before_len + repl_len + tail_len >= sizeof(tmp)) {
+            tail_len = sizeof(tmp) - before_len - repl_len - 1;
+        }
+        memcpy(tmp, text, before_len);
+        memcpy(tmp + before_len, replacement, repl_len);
+        memcpy(tmp + before_len + repl_len, hit + needle_len, tail_len);
+        tmp[before_len + repl_len + tail_len] = '\0';
+        if (text_sz > 0) {
+            strncpy(text, tmp, text_sz - 1);
+            text[text_sz - 1] = '\0';
+        }
+    }
+}
+
+static void strip_voice_role_prefix(char *text)
+{
+    const char *prefixes[] = {
+        "问：", "答：", "客户：", "客户:", "助手：", "AI：", "AI:"
+    };
+    int changed = 1;
+    if (!text) return;
+    while (*text == ' ' || *text == '\t') {
+        memmove(text, text + 1, strlen(text));
+    }
+    while (changed) {
+        changed = 0;
+        for (size_t i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); i++) {
+            size_t len = strlen(prefixes[i]);
+            if (strncmp(text, prefixes[i], len) == 0) {
+                memmove(text, text + len, strlen(text + len) + 1);
+                changed = 1;
+                break;
+            }
+        }
+    }
+    while (*text == ' ' || *text == '\t') {
+        memmove(text, text + 1, strlen(text));
+    }
+}
+
+static void sanitize_voice_text(char *text, size_t text_sz)
+{
+    char clean[256];
+    size_t j = 0;
+    if (!text || text_sz == 0) return;
+
+    strip_voice_role_prefix(text);
+
+    replace_all_inplace(text, text_sz, "濂界殑", "好的");
+    replace_all_inplace(text, text_sz, "锛屽凡涓烘偍鎵撳紑", "，已为您打开");
+    replace_all_inplace(text, text_sz, "鏀浠樺疂", "支付宝");
+    replace_all_inplace(text, text_sz, "鏀舵剧爜", "收款码");
+    replace_all_inplace(text, text_sz, "锛岃锋壂鐮佹敮浠樸", "，请扫码支付。");
+    replace_all_inplace(text, text_sz, "宸蹭负鎮ㄦ墦寮", "已为您打开");
+    replace_all_inplace(text, text_sz, "宸蹭负", "已为");
+    replace_all_inplace(text, text_sz, "璇锋壂鐮佹敮浠", "请扫码支付");
+    replace_all_inplace(text, text_sz, "璇锋壂鐮", "请扫码");
+
+    for (size_t i = 0; text[i] && j + 1 < sizeof(clean); i++) {
+        unsigned char c = (unsigned char)text[i];
+        if (c < 0x20 && c != '\t') continue;
+        clean[j++] = text[i];
+    }
+    clean[j] = '\0';
+    strncpy(text, clean, text_sz - 1);
+    text[text_sz - 1] = '\0';
+    strip_voice_role_prefix(text);
+}
+
+static void format_prefixed_text(char *out, size_t out_sz,
+                                 const char *prefix,
+                                 const char *text)
+{
+    size_t used;
+    if (!out || out_sz == 0) return;
+    out[0] = '\0';
+    if (prefix) {
+        strncpy(out, prefix, out_sz - 1);
+        out[out_sz - 1] = '\0';
+    }
+    used = strlen(out);
+    if (text && used + 1 < out_sz) {
+        strncpy(out + used, text, out_sz - used - 1);
+        out[out_sz - 1] = '\0';
+    }
+}
+
 static void text_from_line(char *out, size_t out_sz, const char *line, const char *prefix)
 {
     size_t len = strlen(prefix);
@@ -901,8 +1009,9 @@ static void retail_apply_voice_cart_command(const char *cmd)
         retail_checkout_summary(summary, sizeof(summary));
         snprintf(g_voice_question, sizeof(g_voice_question), "CHECKOUT");
         snprintf(g_voice_answer, sizeof(g_voice_answer), "%s", summary);
-        retail_push_voice_history(g_voice_question);
-        retail_push_voice_history(g_voice_answer);
+        retail_push_voice_history("客户:CHECKOUT");
+        format_prefixed_text(summary, sizeof(summary), "AI:", g_voice_answer);
+        retail_push_voice_history(summary);
         return;
     }
     if (equals_ignore_case(cmd, "checkout_pending")) {
@@ -913,8 +1022,8 @@ static void retail_apply_voice_cart_command(const char *cmd)
         g_payment_popup_until_ms = 0;
         snprintf(g_voice_question, sizeof(g_voice_question), "CHECKOUT");
         snprintf(g_voice_answer, sizeof(g_voice_answer), "请选择微信支付、支付宝支付或银联云闪付");
-        retail_push_voice_history(g_voice_question);
-        retail_push_voice_history(g_voice_answer);
+        retail_push_voice_history("客户:CHECKOUT");
+        retail_push_voice_history("AI:请选择微信支付、支付宝支付或银联云闪付");
         return;
     }
     if (equals_ignore_case(cmd, "pay:wechat")) {
@@ -931,8 +1040,8 @@ static void retail_apply_voice_cart_command(const char *cmd)
         g_checkout_requested = 1;
         snprintf(g_voice_question, sizeof(g_voice_question), "银联云闪付");
         snprintf(g_voice_answer, sizeof(g_voice_answer), "该支付方式暂不可用");
-        retail_push_voice_history(g_voice_question);
-        retail_push_voice_history(g_voice_answer);
+        retail_push_voice_history("客户:银联云闪付");
+        retail_push_voice_history("AI:该支付方式暂不可用");
         return;
     }
     if (strncmp(cmd, "add:", 4) == 0) {
@@ -1011,14 +1120,16 @@ static int retail_apply_voice_state(void)
     g_voice_state_mtime = st.st_mtime;
     if (question[0]) {
         char line_q[120];
+        sanitize_voice_text(question, sizeof(question));
         snprintf(g_voice_question, sizeof(g_voice_question), "%s", question);
-        snprintf(line_q, sizeof(line_q), "问：%s", question);
+        format_prefixed_text(line_q, sizeof(line_q), "客户:", question);
         retail_push_voice_history(line_q);
     }
     if (answer[0]) {
         char line_a[120];
+        sanitize_voice_text(answer, sizeof(answer));
         snprintf(g_voice_answer, sizeof(g_voice_answer), "%s", answer);
-        snprintf(line_a, sizeof(line_a), "答：%s", answer);
+        format_prefixed_text(line_a, sizeof(line_a), "AI:", answer);
         retail_push_voice_history(line_a);
     }
     retail_apply_voice_cart_command(cart_cmd);
@@ -1053,8 +1164,9 @@ static void retail_speak_product_added(const struct retail_product *product)
     retail_speak_text_async(text);
     snprintf(g_voice_question, sizeof(g_voice_question), "扫码：%s", product->name);
     snprintf(g_voice_answer, sizeof(g_voice_answer), "%s已加入购物车", product->name);
-    retail_push_voice_history(g_voice_question);
-    retail_push_voice_history(g_voice_answer);
+    retail_push_voice_history("客户:扫码");
+    format_prefixed_text(text, sizeof(text), "AI:", g_voice_answer);
+    retail_push_voice_history(text);
 }
 
 static void retail_create_payment_order(void)
@@ -1084,7 +1196,7 @@ static void retail_finish_payment_and_reset(void)
     snprintf(g_payment_url, sizeof(g_payment_url), "PAY: scan checkout");
     snprintf(g_voice_question, sizeof(g_voice_question), "PAYMENT COMPLETE");
     snprintf(g_voice_answer, sizeof(g_voice_answer), "Cart cleared, ready for next customer.");
-    retail_push_voice_history(g_voice_answer);
+    retail_push_voice_history("AI:Cart cleared, ready for next customer.");
     printf("[payment] complete; cart cleared and main UI reset\n");
     fflush(stdout);
 }
@@ -1389,7 +1501,7 @@ static void draw_voice_history_panel(uint32_t *fb, int fw, int fh,
     if (remaining_lines > 5) remaining_lines = 5;
     for (int i = 0; i < VOICE_HISTORY_LINES; i++) {
         if (remaining_lines <= 0) break;
-        uint32_t color = (strstr(g_voice_history[i], "答：") != NULL) ? 0xFF52E27E : 0xFFFFFFFF;
+        uint32_t color = (strstr(g_voice_history[i], "AI:") != NULL) ? 0xFF52E27E : 0xFFFFFFFF;
         int used = draw_text_utf8_wrapped_rgb(fb, fw, fh, text_x, text_y,
                                               text_w, remaining_lines,
                                               g_voice_history[i], 1, color);
