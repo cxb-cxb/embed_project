@@ -61,6 +61,7 @@
 #define VOICE_STATE_FILE "/tmp/qsm_retail_voice_state"
 #define PAYMENT_WAIT_FILE "/tmp/qsm_payment_waiting_method"
 #define PAYMENT_DONE_FILE "/tmp/qsm_payment_done"
+#define PAYMENT_FINISHED_VOICE_FILE "/tmp/qsm_payment_finished_voice"
 #define VOICE_HISTORY_LINES 4
 #define VOICE_HISTORY_TEXT_MAX 192
 #define QR_REPEAT_ADD_COOLDOWN_MS 800
@@ -1413,6 +1414,7 @@ static void retail_hide_payment_popup(void)
 
 static void retail_finish_payment_and_reset(void)
 {
+    FILE *finish_voice;
     retail_cart_clear();
     retail_hide_payment_popup();
     unlink(PAYMENT_WAIT_FILE);
@@ -1425,6 +1427,11 @@ static void retail_finish_payment_and_reset(void)
     snprintf(g_voice_question, sizeof(g_voice_question), "PAYMENT COMPLETE");
     snprintf(g_voice_answer, sizeof(g_voice_answer), "Cart cleared, ready for next customer.");
     retail_push_voice_history("AI：购物车已清空，欢迎继续选购。");
+    finish_voice = fopen(PAYMENT_FINISHED_VOICE_FILE, "w");
+    if (finish_voice) {
+        fputs("payment_finished\n", finish_voice);
+        fclose(finish_voice);
+    }
     printf("[payment] complete; cart cleared and main UI reset\n");
     fflush(stdout);
 }

@@ -12,9 +12,11 @@ WAKE_ACK_WAV="$CACHE_DIR/wake_ack_tts.wav"
 WELCOME_TEXT="${WELCOME_TEXT:-欢迎来到智能售货机。}"
 VOICE_STATE_FILE="${VOICE_STATE_FILE:-/tmp/qsm_retail_voice_state}"
 PAYMENT_WAIT_FILE="${PAYMENT_WAIT_FILE:-/tmp/qsm_payment_waiting_method}"
+PAYMENT_FINISHED_VOICE_FILE="${PAYMENT_FINISHED_VOICE_FILE:-/tmp/qsm_payment_finished_voice}"
 TTS_PLAYING_FILE="${TTS_PLAYING_FILE:-/tmp/qsm_tts_playing}"
 VOICE_WAKE_WORDS="${VOICE_WAKE_WORDS:-小智小智|小智|小知|小志|晓智|小芝|小只|智能售货机|售货机|信息机|智能售后}"
 WAKE_ACK_TEXT="${WAKE_ACK_TEXT:-我在}"
+PAYMENT_FINISHED_TEXT="${PAYMENT_FINISHED_TEXT:-支付已完成，购物车已清空，欢迎继续选购。}"
 
 if [ -f "$ASR_ENV" ]; then
     # shellcheck disable=SC1090
@@ -335,6 +337,17 @@ play_local_cart_reply() {
             start_async_local_cart_reply_tts "$answer"
             ;;
     esac
+}
+
+consume_payment_finished_voice_prompt() {
+    label="${1:-voice}"
+    if [ -f "$PAYMENT_FINISHED_VOICE_FILE" ]; then
+        rm -f "$PAYMENT_FINISHED_VOICE_FILE"
+        echo "Payment finished voice prompt before ${label}."
+        play_local_cart_reply "$PAYMENT_FINISHED_TEXT" || true
+        return 0
+    fi
+    return 1
 }
 
 prepare_speaker() {
@@ -721,6 +734,7 @@ recognize_voice_once() {
     log="/tmp/embed_project_${label}.log"
     rm -f "$log"
 
+    consume_payment_finished_voice_prompt "$label" || true
     wait_for_tts_playback_idle "$label"
     ensure_dns
     prepare_mic
@@ -772,6 +786,7 @@ run_wake_once() {
            [ -n "$(voice_cart_command "$wake_text")" ]; then
             echo "Retail command detected without wake word."
             run_open_chat_reply "$wake_text" || true
+            run_active_session
             return 0
         fi
         echo "Wake word not detected."
@@ -928,6 +943,10 @@ case "${1:-}" in
         ;;
     --prepare-cache)
         build_wake_ack_audio || true
+        exit 0
+        ;;
+    --payment-finished-prompt)
+        consume_payment_finished_voice_prompt manual || true
         exit 0
         ;;
     --wake-once)

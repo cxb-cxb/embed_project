@@ -281,9 +281,38 @@ class VoiceAutoListenScriptTest(unittest.TestCase):
         self.assertLess(echo_pos, payment_pos)
 
         retail_pos = text.index('echo "Retail command detected without wake word."')
-        retail_block = text[retail_pos: retail_pos + 220]
+        retail_block = text[retail_pos: retail_pos + 320]
         self.assertIn('run_open_chat_reply "$wake_text" || true', retail_block)
-        self.assertNotIn("run_active_session", retail_block)
+        self.assertIn("run_active_session", retail_block)
+
+    def test_retail_commands_without_wake_continue_voice_detection(self):
+        script = ROOT / "scripts" / "run_voiceask_speaker.sh"
+        self.assertTrue(script.exists())
+
+        text = script.read_text(encoding="utf-8", errors="ignore")
+        retail_pos = text.index('echo "Retail command detected without wake word."')
+        retail_block = text[retail_pos: retail_pos + 360]
+        self.assertIn('run_open_chat_reply "$wake_text" || true', retail_block)
+        self.assertIn("run_active_session", retail_block)
+
+    def test_payment_finish_signal_triggers_voice_prompt(self):
+        speaker_script = ROOT / "scripts" / "run_voiceask_speaker.sh"
+        auto_script = ROOT / "scripts" / "start_voice_auto_listen.sh"
+        self.assertTrue(speaker_script.exists())
+        self.assertTrue(auto_script.exists())
+
+        speaker_text = speaker_script.read_text(encoding="utf-8", errors="ignore")
+        auto_text = auto_script.read_text(encoding="utf-8", errors="ignore")
+
+        self.assertIn('PAYMENT_FINISHED_VOICE_FILE="${PAYMENT_FINISHED_VOICE_FILE:-/tmp/qsm_payment_finished_voice}"', speaker_text)
+        self.assertIn("consume_payment_finished_voice_prompt()", speaker_text)
+        self.assertIn('rm -f "$PAYMENT_FINISHED_VOICE_FILE"', speaker_text)
+        self.assertIn('play_local_cart_reply "$PAYMENT_FINISHED_TEXT" || true', speaker_text)
+        self.assertIn('consume_payment_finished_voice_prompt "$label"', speaker_text)
+        self.assertIn("--payment-finished-prompt", speaker_text)
+
+        self.assertIn('PAYMENT_FINISHED_VOICE_FILE="${PAYMENT_FINISHED_VOICE_FILE:-/tmp/qsm_payment_finished_voice}"', auto_text)
+        self.assertIn("--payment-finished-prompt", auto_text)
 
     def test_checkout_keywords_cover_more_short_payment_phrases(self):
         script = ROOT / "scripts" / "run_voiceask_speaker.sh"

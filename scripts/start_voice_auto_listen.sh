@@ -7,6 +7,7 @@ BEEP_WAV="/tmp/qsm_voice_ready_beep.wav"
 WELCOME_MP3="$PROJECT_DIR/cache/welcome_tts.mp3"
 LOCK_DIR="${VOICE_LOCK_DIR:-/tmp/qsm_auto_voice.lock}"
 TTS_PLAYING_FILE="${TTS_PLAYING_FILE:-/tmp/qsm_tts_playing}"
+PAYMENT_FINISHED_VOICE_FILE="${PAYMENT_FINISHED_VOICE_FILE:-/tmp/qsm_payment_finished_voice}"
 
 if [ -f "$ENV_FILE" ]; then
     # shellcheck disable=SC1090
@@ -98,6 +99,9 @@ fi
 echo "Auto voice listener is running. Say wake word first, then talk for ${VOICE_SESSION_SECONDS}s after '$WAKE_ACK_TEXT'. Press Ctrl+C to stop."
 
 while true; do
+    if [ -f "$PAYMENT_FINISHED_VOICE_FILE" ]; then
+        "$PROJECT_DIR/scripts/run_voiceask_speaker.sh" --payment-finished-prompt || true
+    fi
     wait_for_tts_playback_idle wake
     prepare_audio
     echo "Listening for wake word..."

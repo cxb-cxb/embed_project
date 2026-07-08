@@ -248,6 +248,16 @@ class QrDisplayStaticTests(unittest.TestCase):
         self.assertIn("\"PAY: scan checkout\"", reset_block)
         self.assertIn("g_order_id[0] = '\\0';", reset_block)
 
+    def test_payment_reset_signals_voice_completion_prompt(self):
+        code = SRC.read_text(encoding="utf-8", errors="ignore")
+
+        self.assertIn('#define PAYMENT_FINISHED_VOICE_FILE "/tmp/qsm_payment_finished_voice"', code)
+        reset_pos = code.index("static void retail_finish_payment_and_reset(void)\n{")
+        reset_block = code[reset_pos: reset_pos + 1100]
+        self.assertIn("fopen(PAYMENT_FINISHED_VOICE_FILE, \"w\")", reset_block)
+        self.assertIn("fputs(\"payment_finished\\n\", finish_voice)", reset_block)
+        self.assertIn("fclose(finish_voice)", reset_block)
+
     def test_voice_cart_commands_are_consumed_once(self):
         code = SRC.read_text(encoding="utf-8", errors="ignore")
 
