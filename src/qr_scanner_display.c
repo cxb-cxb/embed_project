@@ -1692,7 +1692,8 @@ static void draw_payment_popup(void)
     int panel_y = (fh - panel_h) / 2;
     int qr_x = panel_x + 44;
     int qr_y = panel_y + 76;
-    int countdown_y = panel_y + panel_h + 18;
+    int countdown_x = panel_x + panel_w + 28;
+    int countdown_y = panel_y + 96;
     int remain = (int)((g_payment_popup_until_ms - now_ms() + 999) / 1000);
     uint32_t theme = equals_ignore_case(g_payment_method, "alipay") ? 0xFF1677FF : 0xFF07C160;
     const uint32_t *qr = equals_ignore_case(g_payment_method, "alipay") ?
@@ -1719,11 +1720,14 @@ static void draw_payment_popup(void)
     }
     char remain_text[32];
     snprintf(remain_text, sizeof(remain_text), "%02dS", remain);
-    fill_rect_rgb(fb, fw, fh, panel_x, countdown_y - 10, panel_w, 70, 0xDD071018);
-    draw_rect_rgb(fb, fw, fh, panel_x, countdown_y - 10, panel_w, 70, theme, 2);
-    draw_text_utf8_rgb(fb, fw, fh, panel_x + 34, countdown_y + 8,
-                       "请扫码完成支付，30秒后自动返回", 1, 0xFFFFFFFF);
-    draw_text_rgb(fb, fw, fh, panel_x + panel_w - 156, countdown_y - 2, remain_text, 5, theme);
+    fill_rect_rgb(fb, fw, fh, panel_x, panel_y + panel_h + 12, panel_w, 54, 0xDD071018);
+    draw_rect_rgb(fb, fw, fh, panel_x, panel_y + panel_h + 12, panel_w, 54, theme, 2);
+    draw_text_utf8_rgb(fb, fw, fh, panel_x + 46, panel_y + panel_h + 28,
+                       "请扫码完成支付，稍后自动返回", 1, 0xFFFFFFFF);
+    fill_rect_rgb(fb, fw, fh, countdown_x - 12, countdown_y - 16, 190, 86, 0xDD071018);
+    draw_rect_rgb(fb, fw, fh, countdown_x - 12, countdown_y - 16, 190, 86, theme, 3);
+    draw_text_utf8_rgb(fb, fw, fh, countdown_x + 20, countdown_y - 6, "剩余", 1, 0xFFFFFFFF);
+    draw_text_rgb(fb, fw, fh, countdown_x + 18, countdown_y + 28, remain_text, 5, theme);
 }
 
 static void draw_voice_history_panel(uint32_t *fb, int fw, int fh,

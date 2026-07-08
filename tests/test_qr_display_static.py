@@ -252,9 +252,11 @@ class QrDisplayStaticTests(unittest.TestCase):
         code = SRC.read_text(encoding="utf-8", errors="ignore")
 
         popup_pos = code.index("static void draw_payment_popup(void)")
-        popup_block = code[popup_pos: popup_pos + 2600]
-        self.assertIn("countdown_y = panel_y + panel_h + 18", popup_block)
-        self.assertIn('"请扫码完成支付，30秒后自动返回"', popup_block)
+        popup_block = code[popup_pos: popup_pos + 3200]
+        self.assertIn("countdown_x = panel_x + panel_w + 28", popup_block)
+        self.assertIn("countdown_y = panel_y + 96", popup_block)
+        self.assertIn('"请扫码完成支付，稍后自动返回"', popup_block)
+        self.assertNotIn("30秒后自动返回", popup_block)
         self.assertNotIn("60秒后自动返回", popup_block)
         self.assertIn('snprintf(remain_text, sizeof(remain_text), "%02dS", remain)', popup_block)
         self.assertIn("remain_text, 5, theme", popup_block)
