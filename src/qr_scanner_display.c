@@ -96,9 +96,8 @@ static void          *g_ui_map      = NULL;
 static int            g_ui_w = 0, g_ui_h = 0;
 static int            g_ui_pitch = 0;
 static int            g_ui_rotate_landscape = 0;
-static unsigned int   g_order_seq = 0;
 static int            g_last_total_cents = 0;
-static char           g_order_id[48] = "ORDER: pending";
+static char           g_order_id[48] = "";
 static char           g_payment_url[160] = "PAY: scan checkout";
 static int            g_checkout_requested = 0;
 static char           g_payment_method[16] = "";
@@ -769,6 +768,8 @@ static const struct retail_product *retail_product_from_payload(const char *payl
     return NULL;
 }
 
+static void retail_ensure_order_id(void);
+
 static const uint32_t *retail_product_icon(const struct retail_product *product)
 {
     if (!product) return UI_ICON_WATER;
@@ -785,10 +786,27 @@ static const uint32_t *retail_product_icon(const struct retail_product *product)
     return UI_ICON_WATER;
 }
 
+static const char *retail_product_name_cn(const struct retail_product *product)
+{
+    if (!product) return "商品";
+    if (equals_ignore_case(product->id, "water")) return "矿泉水";
+    if (equals_ignore_case(product->id, "cola")) return "可乐";
+    if (equals_ignore_case(product->id, "milk")) return "牛奶";
+    if (equals_ignore_case(product->id, "bread")) return "面包";
+    if (equals_ignore_case(product->id, "noodle")) return "泡面";
+    if (equals_ignore_case(product->id, "chips")) return "薯片";
+    if (equals_ignore_case(product->id, "biscuit")) return "饼干";
+    if (equals_ignore_case(product->id, "toothpaste")) return "牙膏";
+    if (equals_ignore_case(product->id, "tissue")) return "纸巾";
+    if (equals_ignore_case(product->id, "soap")) return "香皂";
+    return product->name;
+}
+
 static void retail_cart_add_product(const struct retail_product *product)
 {
     if (!product) return;
     g_checkout_requested = 0;
+    retail_ensure_order_id();
     for (int i = 0; i < g_cart_count; i++) {
         if (g_cart[i].product == product) {
             g_cart[i].quantity++;
@@ -806,6 +824,7 @@ static void retail_cart_clear(void)
 {
     memset(g_cart, 0, sizeof(g_cart));
     g_cart_count = 0;
+    g_order_id[0] = '\0';
 }
 
 static int retail_cart_item_count(void)
@@ -822,6 +841,15 @@ static int retail_cart_total_cents(void)
         total += g_cart[i].product->price_cents * g_cart[i].quantity;
     }
     return total;
+}
+
+static void retail_ensure_order_id(void)
+{
+    if (g_order_id[0]) return;
+    unsigned int seed = (unsigned int)(now_ms() ^ (int64_t)time(NULL) ^
+                                       (int64_t)(uintptr_t)&seed);
+    srand(seed);
+    snprintf(g_order_id, sizeof(g_order_id), "%06d", 100000 + rand() % 900000);
 }
 
 static void money_text(int cents, char *out, size_t out_sz)
@@ -996,10 +1024,9 @@ static void retail_speak_product_added(const struct retail_product *product)
 
 static void retail_create_payment_order(void)
 {
-    g_order_seq++;
-    snprintf(g_order_id, sizeof(g_order_id), "ORDER:QSM%04u", g_order_seq);
-    snprintf(g_payment_url, sizeof(g_payment_url), "order=QSM%04u&amount=%d",
-             g_order_seq, g_last_total_cents);
+    retail_ensure_order_id();
+    snprintf(g_payment_url, sizeof(g_payment_url), "order=%s&amount=%d",
+             g_order_id, g_last_total_cents);
 }
 
 static void retail_hide_payment_popup(void)
@@ -1018,7 +1045,7 @@ static void retail_finish_payment_and_reset(void)
     g_voice_state_mtime = 0;
     g_checkout_requested = 0;
     g_last_total_cents = 0;
-    snprintf(g_order_id, sizeof(g_order_id), "ORDER: pending");
+    g_order_id[0] = '\0';
     snprintf(g_payment_url, sizeof(g_payment_url), "PAY: scan checkout");
     snprintf(g_voice_question, sizeof(g_voice_question), "PAYMENT COMPLETE");
     snprintf(g_voice_answer, sizeof(g_voice_answer), "Cart cleared, ready for next customer.");
@@ -1033,7 +1060,7 @@ static void retail_show_payment_popup(const char *method)
     if (g_last_total_cents <= 0) {
         g_last_total_cents = retail_cart_total_cents();
     }
-    if (g_order_seq == 0 || !g_checkout_requested) {
+    if (!g_order_id[0] || !g_checkout_requested) {
         retail_create_payment_order();
     }
     g_checkout_requested = 1;
@@ -1134,16 +1161,17 @@ static void draw_cart_table(int x, int y, int w, int h,
 
     fill_rect_rgb(fb, fw, fh, x, y, w, h, 0xFF0B202B);
     draw_rect_rgb(fb, fw, fh, x, y, w, h, 0xFF145169, 1);
-    draw_text_rgb(fb, fw, fh, x + 14, y + 12, "CART", 2, 0xFFFFFFFF);
-    draw_text_rgb(fb, fw, fh, x + 26, y + 48, "NO", 1, 0xFFB8CDD5);
-    draw_text_rgb(fb, fw, fh, x + 116, y + 48, "PRODUCT", 1, 0xFFB8CDD5);
-    draw_text_rgb(fb, fw, fh, x + 320, y + 48, "PRICE", 1, 0xFFB8CDD5);
-    draw_text_rgb(fb, fw, fh, x + 412, y + 48, "QTY", 1, 0xFFB8CDD5);
-    draw_text_rgb(fb, fw, fh, x + w - 84, y + 48, "SUB", 1, 0xFFB8CDD5);
+    draw_text_utf8_rgb(fb, fw, fh, x + 14, y + 12, "购物车清单", 1, 0xFFFFFFFF);
+    draw_text_utf8_rgb(fb, fw, fh, x + 26, y + 48, "序号", 1, 0xFFB8CDD5);
+    draw_text_utf8_rgb(fb, fw, fh, x + 116, y + 48, "商品", 1, 0xFFB8CDD5);
+    draw_text_utf8_rgb(fb, fw, fh, x + 320, y + 48, "单价", 1, 0xFFB8CDD5);
+    draw_text_utf8_rgb(fb, fw, fh, x + 412, y + 48, "数量", 1, 0xFFB8CDD5);
+    draw_text_utf8_rgb(fb, fw, fh, x + w - 92, y + 48, "小计", 1, 0xFFB8CDD5);
 
     visible = g_cart_count < 3 ? g_cart_count : 3;
     if (visible == 0) {
-        draw_text_rgb(fb, fw, fh, x + 36, y + 96, "WAITING FOR QR OR VOICE", 2, 0xFFB8CDD5);
+        draw_text_utf8_rgb(fb, fw, fh, x + 54, y + 96,
+                           "等待扫码或语音添加商品", 1, 0xFFB8CDD5);
     }
     for (int i = 0; i < visible; i++) {
         const struct retail_product *p = g_cart[i].product;
@@ -1157,19 +1185,22 @@ static void draw_cart_table(int x, int y, int w, int h,
         draw_rect_rgb(fb, fw, fh, x + 10, row_y, w - 20, 42, 0xFF244B5C, 1);
         draw_text_rgb(fb, fw, fh, x + 42, row_y + 15, row_no, 2, 0xFFFFFFFF);
         blit_icon_rgb(fb, fw, fh, x + 92, row_y + 2, retail_product_icon(p));
-        draw_text_rgb(fb, fw, fh, x + 166, row_y + 15, p->name, 2, 0xFFFFFFFF);
-        draw_text_rgb(fb, fw, fh, x + 334, row_y + 15, price, 2, 0xFFFFFFFF);
-        draw_text_rgb(fb, fw, fh, x + 448, row_y + 15, qty, 2, 0xFFFFFFFF);
-        draw_text_rgb(fb, fw, fh, x + w - 70, row_y + 15, total, 2, 0xFFFFFFFF);
+        draw_text_utf8_rgb(fb, fw, fh, x + 166, row_y + 13,
+                           retail_product_name_cn(p), 1, 0xFFFFFFFF);
+        draw_text_rgb(fb, fw, fh, x + 318, row_y + 15, price, 2, 0xFFFFFFFF);
+        draw_text_rgb(fb, fw, fh, x + 426, row_y + 15, qty, 2, 0xFFFFFFFF);
+        draw_text_rgb(fb, fw, fh, x + w - 106, row_y + 15, total, 2, 0xFFFFFFFF);
     }
 
     fill_rect_rgb(fb, fw, fh, x + 10, y + h - 50, w - 20, 38, 0xFF0F2C3B);
     snprintf(qty, sizeof(qty), "%d", retail_cart_item_count());
-    draw_text_rgb(fb, fw, fh, x + 54, y + h - 38, "TOTAL", 2, 0xFFFFFFFF);
-    draw_text_rgb(fb, fw, fh, x + 132, y + h - 42, qty, 3, 0xFFFFFFFF);
-    draw_text_rgb(fb, fw, fh, x + 170, y + h - 38, "ITEMS", 2, 0xFFFFFFFF);
+    draw_text_utf8_rgb(fb, fw, fh, x + 44, y + h - 39, "合计：", 1, 0xFFFFFFFF);
+    draw_text_rgb(fb, fw, fh, x + 116, y + h - 42, qty, 3, 0xFFFFFFFF);
+    draw_text_utf8_rgb(fb, fw, fh, x + 154, y + h - 39, "件商品", 1, 0xFFFFFFFF);
     money_text(retail_cart_total_cents(), total, sizeof(total));
-    draw_text_rgb(fb, fw, fh, x + w - 142, y + h - 42, total, 3, 0xFF52E27E);
+    draw_text_utf8_rgb(fb, fw, fh, x + 282, y + h - 39, "应付：", 1, 0xFFFFFFFF);
+    draw_text_rgb(fb, fw, fh, x + w - 146, y + h - 42, total, 3, 0xFF52E27E);
+    draw_text_utf8_rgb(fb, fw, fh, x + w - 52, y + h - 39, "元", 1, 0xFF52E27E);
     return;
 
     fill_rect_rgb(fb, fw, fh, x, y, w, h, 0xFF0B202B);
@@ -1218,14 +1249,28 @@ static void draw_payment_panel(int x, int y, int w, int h, unsigned int qr_count
 
     fill_rect_rgb(fb, fw, fh, x, y, w, h, 0xFF0B202B);
     draw_rect_rgb(fb, fw, fh, x, y, w, h, 0xFF145169, 1);
-    fill_rect_rgb(fb, fw, fh, x + 18, y + 24, 86, 86, 0xFFFFFFFF);
-    for (int yy = 0; yy < 9; yy++) {
-        for (int xx = 0; xx < 9; xx++) {
-            if (((xx * 13 + yy * 7 + xx * yy) % 5) < 2) {
-                fill_rect_rgb(fb, fw, fh, x + 24 + xx * 8, y + 30 + yy * 8, 5, 5, 0xFF000000);
-            }
-        }
-    }
+    money_text(g_last_total_cents, amount, sizeof(amount));
+
+    fill_rect_rgb(fb, fw, fh, x + 14, y + 16, w - 286, h - 32, 0xFF0F2C3B);
+    draw_rect_rgb(fb, fw, fh, x + 14, y + 16, w - 286, h - 32, 0xFF244B5C, 1);
+    draw_text_utf8_rgb(fb, fw, fh, x + 28, y + 28, "支付信息", 1, 0xFFFFFFFF);
+    draw_text_utf8_rgb(fb, fw, fh, x + 28, y + 74, "订单号：", 1, 0xFFCED7DD);
+    if (g_order_id[0]) draw_text_rgb(fb, fw, fh, x + 142, y + 72, g_order_id, 2, 0xFFFFFFFF);
+    draw_text_utf8_rgb(fb, fw, fh, x + 28, y + 116, "金额：", 1, 0xFFCED7DD);
+    draw_text_rgb(fb, fw, fh, x + 118, y + 117, amount, 2, 0xFF52E27E);
+    draw_text_utf8_rgb(fb, fw, fh, x + 200, y + 116, "元", 1, 0xFF52E27E);
+
+    int bx_new = x + w - 256;
+    int bw_new = 236;
+    fill_rect_rgb(fb, fw, fh, bx_new, y + 24, bw_new, 36, 0xFF16A34A);
+    fill_rect_rgb(fb, fw, fh, bx_new, y + 70, bw_new, 36, 0xFF0A84FF);
+    fill_rect_rgb(fb, fw, fh, bx_new, y + 116, bw_new, 36, 0xFFDC2626);
+    draw_text_utf8_rgb(fb, fw, fh, bx_new + 70, y + 30, "微信支付", 1, 0xFFFFFFFF);
+    draw_text_utf8_rgb(fb, fw, fh, bx_new + 82, y + 76, "支付宝", 1, 0xFFFFFFFF);
+    draw_text_utf8_rgb(fb, fw, fh, bx_new + 58, y + 122, "银联云闪付", 1, 0xFFFFFFFF);
+    return;
+
+    fill_rect_rgb(fb, fw, fh, x + 112, y + 18, w - 132, 112, 0xFF0B202B);
     draw_text_utf8_rgb(fb, fw, fh, x + 122, y + 26, "扫码支付", 1, 0xFFFFFFFF);
     draw_text_utf8_rgb(fb, fw, fh, x + 122, y + 56, "订单", 1, 0xFFCED7DD);
     draw_text_rgb(fb, fw, fh, x + 178, y + 54, "000123", 2, 0xFFFFFFFF);

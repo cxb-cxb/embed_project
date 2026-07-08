@@ -134,8 +134,8 @@ class QrDisplayStaticTests(unittest.TestCase):
     def test_checkout_payment_summary_contains_order_and_amount(self):
         code = SRC.read_text(encoding="utf-8", errors="ignore")
 
-        self.assertIn("ORDER:QSM%04u", code)
-        self.assertIn("order=QSM%04u&amount=%d", code)
+        self.assertIn('snprintf(g_order_id, sizeof(g_order_id), "%06d"', code)
+        self.assertIn("order=%s&amount=%d", code)
         self.assertIn("retail_create_payment_order();", code)
 
     def test_qr_seen_flag_resets_each_frame(self):
@@ -246,7 +246,7 @@ class QrDisplayStaticTests(unittest.TestCase):
         self.assertIn("g_checkout_requested = 0;", reset_block)
         self.assertIn("g_last_total_cents = 0;", reset_block)
         self.assertIn("\"PAY: scan checkout\"", reset_block)
-        self.assertIn("\"ORDER: pending\"", reset_block)
+        self.assertIn("g_order_id[0] = '\\0';", reset_block)
 
     def test_voice_cart_commands_are_consumed_once(self):
         code = SRC.read_text(encoding="utf-8", errors="ignore")
