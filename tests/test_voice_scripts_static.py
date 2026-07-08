@@ -218,8 +218,9 @@ class VoiceAutoListenScriptTest(unittest.TestCase):
         self.assertIn("with_tts_playback_lock()", text)
         self.assertIn("wait_for_tts_playback_idle()", text)
         self.assertIn('printf "%s\\n" "$$" > "$TTS_PLAYING_FILE"', text)
-        self.assertIn('sleep "${VOICE_TTS_POST_DELAY_SECONDS:-1.5}"', text)
-        self.assertIn('rm -f "$TTS_PLAYING_FILE"', text)
+        self.assertIn('sleep "${VOICE_TTS_POST_DELAY_SECONDS:-2.5}"', text)
+        self.assertIn("clear_tts_playback_lock_if_owner()", text)
+        self.assertIn('clear_tts_playback_lock_if_owner "$tts_lock_owner"', text)
         self.assertIn('wait_for_tts_playback_idle "$label"', text)
 
         play_pos = text.index("play_wav_file()")
@@ -232,6 +233,33 @@ class VoiceAutoListenScriptTest(unittest.TestCase):
         self.assertLess(
             recognize_block.index('wait_for_tts_playback_idle "$label"'),
             recognize_block.index("prepare_mic"),
+        )
+
+    def test_tts_lock_ownership_prevents_overlapping_playback_from_unmuting_mic(self):
+        script = ROOT / "scripts" / "run_voiceask_speaker.sh"
+        self.assertTrue(script.exists())
+
+        text = script.read_text(encoding="utf-8", errors="ignore")
+        self.assertIn("clear_tts_playback_lock_if_owner()", text)
+
+        lock_pos = text.index("with_tts_playback_lock()")
+        lock_block = text[lock_pos: lock_pos + 520]
+        self.assertIn('tts_lock_owner="$$"', lock_block)
+        self.assertIn('printf "%s\\n" "$tts_lock_owner" > "$TTS_PLAYING_FILE"', lock_block)
+        self.assertIn('clear_tts_playback_lock_if_owner "$tts_lock_owner"', lock_block)
+
+        clear_pos = text.index("clear_tts_playback_lock_if_owner()")
+        clear_block = text[clear_pos: clear_pos + 420]
+        self.assertIn('owner="$1"', clear_block)
+        self.assertIn('cat "$TTS_PLAYING_FILE"', clear_block)
+        self.assertIn('rm -f "$TTS_PLAYING_FILE"', clear_block)
+
+        active_pos = text.index("run_active_session()")
+        active_block = text[active_pos: active_pos + 620]
+        self.assertIn("wait_for_tts_playback_idle active_session", active_block)
+        self.assertLess(
+            active_block.index("wait_for_tts_playback_idle active_session"),
+            active_block.index('run_voice_question_once "${VOICE_COMMAND_SECONDS:-7}"'),
         )
 
     def test_async_tts_locks_before_auto_listener_can_record(self):

@@ -379,14 +379,23 @@ ensure_network() {
 }
 
 with_tts_playback_lock() {
-    printf "%s\n" "$$" > "$TTS_PLAYING_FILE"
+    tts_lock_owner="$$"
+    printf "%s\n" "$tts_lock_owner" > "$TTS_PLAYING_FILE"
     set +e
     "$@"
     rc=$?
     set -e
-    sleep "${VOICE_TTS_POST_DELAY_SECONDS:-1.5}"
-    rm -f "$TTS_PLAYING_FILE"
+    sleep "${VOICE_TTS_POST_DELAY_SECONDS:-2.5}"
+    clear_tts_playback_lock_if_owner "$tts_lock_owner"
     return "$rc"
+}
+
+clear_tts_playback_lock_if_owner() {
+    owner="$1"
+    current_owner="$(cat "$TTS_PLAYING_FILE" 2>/dev/null || true)"
+    if [ "$current_owner" = "$owner" ]; then
+        rm -f "$TTS_PLAYING_FILE"
+    fi
 }
 
 wait_for_tts_playback_idle() {
@@ -764,6 +773,7 @@ run_active_session() {
     while true; do
         now="$(date +%s 2>/dev/null || echo 0)"
         [ "$now" -lt "$session_end" ] || break
+        wait_for_tts_playback_idle active_session
         echo "Listening for question in active session..."
         run_voice_question_once "${VOICE_COMMAND_SECONDS:-7}"
         sleep "${VOICE_SESSION_LOOP_PAUSE_SECONDS:-1}"
