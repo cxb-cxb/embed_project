@@ -117,18 +117,29 @@ class QrDisplayStaticTests(unittest.TestCase):
         self.assertIn("安全认证，请放心使用", code)
         self.assertIn("遇到问题？点帮助或呼叫店员", code)
 
-    def test_qr_outline_is_drawn_before_payload_decode_gate(self):
+    def test_qr_outline_is_drawn_for_known_product_before_cooldown_gate(self):
         code = SRC.read_text(encoding="utf-8", errors="ignore")
 
         extract_pos = code.index("quirc_extract(qr, i, &code);")
         decode_pos = code.index("quirc_decode(&code, &data)", extract_pos)
+        product_pos = code.index("const struct retail_product *product", decode_pos)
+        gate_pos = code.index("retail_product_can_add_from_qr(product, qr_now_ms)", product_pos)
         draw_pos = code.index("draw_qr_outline(&code, cam_w, cam_h);", extract_pos)
 
-        self.assertLess(
+        self.assertGreater(
             draw_pos,
             decode_pos,
-            "QR outline must be drawn for every detected QR candidate, before "
-            "payload decode/new-payload filtering can suppress drawing.",
+            "QR outline should only be drawn for decoded product QR codes.",
+        )
+        self.assertGreater(
+            draw_pos,
+            product_pos,
+            "Unknown QR payloads should not show the green product outline.",
+        )
+        self.assertLess(
+            draw_pos,
+            gate_pos,
+            "Duplicate product QR scans inside the cooldown should still show recognition outline.",
         )
 
     def test_checkout_payment_summary_contains_order_and_amount(self):
@@ -305,9 +316,25 @@ class QrDisplayStaticTests(unittest.TestCase):
         self.assertIn("retail_finish_payment_and_reset();", loop_block)
         self.assertIn("redraw_dashboard = 1;", loop_block)
 
-    def test_qr_repeat_add_cooldown_is_fast_for_checkout_demo(self):
+    def test_qr_repeat_add_cooldown_uses_twenty_second_product_gate(self):
         code = SRC.read_text(encoding="utf-8", errors="ignore")
-        self.assertIn("#define QR_REPEAT_ADD_COOLDOWN_MS 800", code)
+        self.assertIn("#define QR_PRODUCT_ADD_COOLDOWN_MS 20000", code)
+        self.assertIn("g_product_last_add_ms", code)
+        self.assertIn("retail_product_can_add_from_qr(product, qr_now_ms)", code)
+        self.assertNotIn("#define QR_REPEAT_ADD_COOLDOWN_MS 800", code)
+
+    def test_qr_outline_is_drawn_after_successful_product_decode_before_cooldown(self):
+        code = SRC.read_text(encoding="utf-8", errors="ignore")
+        decode_pos = code.index("static int decode_qr_candidates(")
+        decode_block = code[decode_pos: decode_pos + 2600]
+
+        draw_pos = decode_block.index("draw_qr_outline(&code, cam_w, cam_h);")
+        success_pos = decode_block.index("if (quirc_decode(&code, &data) == QUIRC_SUCCESS)")
+        product_pos = decode_block.index("const struct retail_product *product")
+        can_add_pos = decode_block.index("retail_product_can_add_from_qr(product, qr_now_ms)")
+        self.assertGreater(draw_pos, success_pos)
+        self.assertGreater(draw_pos, product_pos)
+        self.assertLess(draw_pos, can_add_pos)
 
     def test_qr_decode_updates_cart_and_speaks(self):
         code = SRC.read_text(encoding="utf-8", errors="ignore")
@@ -338,7 +365,16 @@ class QrDisplayStaticTests(unittest.TestCase):
         self.assertIn("decode_qr_candidates(qr_enhanced,", code)
         self.assertIn("enhance_luma_for_qr(qb2, yp, cam_w, cam_h, g_y_stride)", code)
 
-    def test_voice_panel_uses_scroll_history_and_qr_repeat_can_accumulate(self):
+    def test_qr_decode_has_center_crop_fallback_for_real_product_photos(self):
+        code = SRC.read_text(encoding="utf-8", errors="ignore")
+
+        self.assertIn("crop_enhance_luma_for_qr(", code)
+        self.assertIn("struct quirc *qr_crop = quirc_new();", code)
+        self.assertIn("quirc_resize(qr_crop, cam_w, cam_h)", code)
+        self.assertIn("crop_enhance_luma_for_qr(qb3, yp, cam_w, cam_h, g_y_stride, 88)", code)
+        self.assertIn('continuous, "center88")', code)
+
+    def test_voice_panel_uses_scroll_history_and_qr_product_cooldown(self):
         code = SRC.read_text(encoding="utf-8", errors="ignore")
 
         for symbol in [
@@ -349,10 +385,10 @@ class QrDisplayStaticTests(unittest.TestCase):
             "draw_text_utf8_wrapped_rgb(",
             "客户：",
             "AI：",
-            "g_last_qr_payload",
-            "g_last_qr_add_ms",
-            "QR_REPEAT_ADD_COOLDOWN_MS",
-            "same_qr_can_add",
+            "g_product_last_add_ms",
+            "QR_PRODUCT_ADD_COOLDOWN_MS",
+            "retail_product_can_add_from_qr(",
+            "retail_product_index(",
         ]:
             with self.subTest(symbol=symbol):
                 self.assertIn(symbol, code)

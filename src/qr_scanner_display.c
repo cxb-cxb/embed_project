@@ -64,7 +64,7 @@
 #define PAYMENT_FINISHED_VOICE_FILE "/tmp/qsm_payment_finished_voice"
 #define VOICE_HISTORY_LINES 4
 #define VOICE_HISTORY_TEXT_MAX 192
-#define QR_REPEAT_ADD_COOLDOWN_MS 800
+#define QR_PRODUCT_ADD_COOLDOWN_MS 20000
 #define PAYMENT_QR_W 360
 #define PAYMENT_QR_H 480
 #define PAYMENT_POPUP_MS 30000
@@ -118,9 +118,6 @@ static char           g_voice_history[VOICE_HISTORY_LINES][VOICE_HISTORY_TEXT_MA
     "AI：可说：把牛奶加入购物车",
     "",
 };
-static char           g_last_qr_payload[256] = "";
-static int64_t        g_last_qr_add_ms = 0;
-
 struct retail_product;
 
 struct retail_cart_line {
@@ -212,6 +209,50 @@ static void enhance_luma_for_qr(uint8_t *dst, const uint8_t *src,
             else if (v > 213) v = 255;
             out[x] = (uint8_t)v;
         }
+    }
+}
+
+static void sharpen_luma_for_qr(uint8_t *dst, uint8_t *tmp, int width, int height)
+{
+    memcpy(tmp, dst, (size_t)width * (size_t)height);
+    for (int y = 1; y < height - 1; y++) {
+        uint8_t *out = dst + y * width;
+        const uint8_t *mid = tmp + y * width;
+        const uint8_t *up = tmp + (y - 1) * width;
+        const uint8_t *down = tmp + (y + 1) * width;
+        for (int x = 1; x < width - 1; x++) {
+            int v = 5 * mid[x] - mid[x - 1] - mid[x + 1] - up[x] - down[x];
+            out[x] = (uint8_t)clamp_int(v, 0, 255);
+        }
+    }
+}
+
+static void crop_enhance_luma_for_qr(uint8_t *dst, const uint8_t *src,
+                                     int width, int height, int stride,
+                                     int crop_percent)
+{
+    int crop_w = width * crop_percent / 100;
+    int crop_h = height * crop_percent / 100;
+    int crop_x = (width - crop_w) / 2;
+    int crop_y = (height - crop_h) / 2;
+    uint8_t *tmp = malloc((size_t)width * (size_t)height);
+    if (crop_w <= 0 || crop_h <= 0) {
+        copy_luma_for_qr(dst, src, width, height, stride);
+        return;
+    }
+    for (int y = 0; y < height; y++) {
+        int sy = crop_y + (int)((int64_t)y * crop_h / height);
+        uint8_t *out = dst + y * width;
+        const uint8_t *row = src + sy * stride;
+        for (int x = 0; x < width; x++) {
+            int sx = crop_x + (int)((int64_t)x * crop_w / width);
+            out[x] = row[sx];
+        }
+    }
+    enhance_luma_for_qr(dst, dst, width, height, width);
+    if (tmp) {
+        sharpen_luma_for_qr(dst, tmp, width, height);
+        free(tmp);
     }
 }
 
@@ -842,6 +883,8 @@ static const struct retail_product g_products[] = {
     {"soap", "Soap", "690100000010", 300},
 };
 
+static int64_t g_product_last_add_ms[sizeof(g_products) / sizeof(g_products[0])] = {0};
+
 static int ascii_lower(int c)
 {
     if (c >= 'A' && c <= 'Z') return c + ('a' - 'A');
@@ -927,6 +970,28 @@ static const struct retail_product *retail_product_from_payload(const char *payl
         }
     }
     return NULL;
+}
+
+static int retail_product_index(const struct retail_product *product)
+{
+    if (!product) return -1;
+    for (size_t i = 0; i < sizeof(g_products) / sizeof(g_products[0]); i++) {
+        if (product == &g_products[i]) return (int)i;
+    }
+    return -1;
+}
+
+static int retail_product_can_add_from_qr(const struct retail_product *product,
+                                          int64_t qr_now_ms)
+{
+    int index = retail_product_index(product);
+    if (index < 0) return 0;
+    if (g_product_last_add_ms[index] > 0 &&
+        qr_now_ms - g_product_last_add_ms[index] < QR_PRODUCT_ADD_COOLDOWN_MS) {
+        return 0;
+    }
+    g_product_last_add_ms[index] = qr_now_ms;
+    return 1;
 }
 
 static void retail_ensure_order_id(void);
@@ -1969,19 +2034,29 @@ static int decode_qr_candidates(struct quirc *qr,
         struct quirc_code code;
         struct quirc_data data;
         quirc_extract(qr, i, &code);
-        if (have_display) {
-            draw_qr_outline(&code, cam_w, cam_h);
-        }
         if (quirc_decode(&code, &data) == QUIRC_SUCCESS) {
             const char *payload = (char *)data.payload;
             int64_t qr_now_ms = now_ms();
-            int same_qr_can_add =
-                strcmp(payload, g_last_qr_payload) == 0 &&
-                (qr_now_ms - g_last_qr_add_ms) >= QR_REPEAT_ADD_COOLDOWN_MS;
+            const struct retail_product *product =
+                retail_product_from_payload(payload);
             decoded = 1;
-            if (strcmp(payload, last) != 0 || same_qr_can_add) {
-                const struct retail_product *product =
-                    retail_product_from_payload(payload);
+            if (!product) {
+                printf("\n>>> QR CODE: %s <<<\n", payload);
+                printf("    pass:%s ignored: unknown product\n", pass_name);
+                fflush(stdout);
+                continue;
+            }
+            if (have_display) {
+                draw_qr_outline(&code, cam_w, cam_h);
+            }
+            if (!retail_product_can_add_from_qr(product, qr_now_ms)) {
+                printf("\n>>> QR CODE: %s <<<\n", payload);
+                printf("    pass:%s ignored: duplicate product within %dms\n",
+                       pass_name, QR_PRODUCT_ADD_COOLDOWN_MS);
+                fflush(stdout);
+                continue;
+            }
+            if (strcmp(payload, last) != 0) {
                 printf("\n>>> QR CODE: %s <<<\n", payload);
                 printf("    ver:%d ecc:%c pass:%s\n",
                        data.version, "MLHQ"[data.ecc_level], pass_name);
@@ -1989,20 +2064,12 @@ static int decode_qr_candidates(struct quirc *qr,
 
                 strncpy(last, payload, last_sz - 1);
                 last[last_sz - 1] = '\0';
-                strncpy(g_last_qr_payload, payload, sizeof(g_last_qr_payload) - 1);
-                g_last_qr_payload[sizeof(g_last_qr_payload) - 1] = '\0';
-                g_last_qr_add_ms = qr_now_ms;
-                if (product) {
-                    retail_cart_add_product(product);
-                    retail_speak_product_added(product);
-                } else {
-                    snprintf(g_voice_question, sizeof(g_voice_question), "QR: %s", last);
-                    snprintf(g_voice_answer, sizeof(g_voice_answer), "Unknown QR payload.");
-                }
-                (*found)++;
-                *redraw_dashboard = 1;
-                if (!continuous) g_running = 0;
             }
+            retail_cart_add_product(product);
+            retail_speak_product_added(product);
+            (*found)++;
+            *redraw_dashboard = 1;
+            if (!continuous) g_running = 0;
         }
     }
     return decoded;
@@ -2461,9 +2528,11 @@ int main(int argc, char **argv)
 
     struct quirc *qr = quirc_new();
     struct quirc *qr_enhanced = quirc_new();
-    if (!qr || !qr_enhanced ||
+    struct quirc *qr_crop = quirc_new();
+    if (!qr || !qr_enhanced || !qr_crop ||
         quirc_resize(qr, cam_w, cam_h) < 0 ||
-        quirc_resize(qr_enhanced, cam_w, cam_h) < 0) {
+        quirc_resize(qr_enhanced, cam_w, cam_h) < 0 ||
+        quirc_resize(qr_crop, cam_w, cam_h) < 0) {
         fprintf(stderr, "quirc init failed\n"); return 1;
     }
 
@@ -2572,6 +2641,19 @@ int main(int argc, char **argv)
                                                               continuous, "enhanced");
                 }
             }
+            if (!decoded_this_frame) {
+                int qw3, qh3;
+                uint8_t *qb3 = quirc_begin(qr_crop, &qw3, &qh3);
+                if (qb3 && qw3 == (int)cam_w && qh3 == (int)cam_h) {
+                    crop_enhance_luma_for_qr(qb3, yp, cam_w, cam_h, g_y_stride, 88);
+                    quirc_end(qr_crop);
+                    decoded_this_frame = decode_qr_candidates(qr_crop, cam_w, cam_h,
+                                                              have_display,
+                                                              last, sizeof(last),
+                                                              &found, &redraw_dashboard,
+                                                              continuous, "center88");
+                }
+            }
         }
         saw_qr_this_frame = decoded_this_frame;
         (void)saw_qr_this_frame;
@@ -2595,6 +2677,7 @@ int main(int argc, char **argv)
     drm_display_cleanup();
     quirc_destroy(qr);
     quirc_destroy(qr_enhanced);
+    quirc_destroy(qr_crop);
 
     int64_t e = now_ms() - t0;
     printf("\nDone. %u frames %.1fs (%.1ffps) | %d QR found.\n",
