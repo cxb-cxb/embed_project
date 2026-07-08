@@ -270,18 +270,19 @@ class QrDisplayStaticTests(unittest.TestCase):
         self.assertIn("\"PAY: scan checkout\"", reset_block)
         self.assertIn("g_order_id[0] = '\\0';", reset_block)
 
-    def test_payment_popup_countdown_is_large_and_outside_qr_panel(self):
+    def test_payment_popup_countdown_is_inline_in_bottom_hint(self):
         code = SRC.read_text(encoding="utf-8", errors="ignore")
 
         popup_pos = code.index("static void draw_payment_popup(void)")
         popup_block = code[popup_pos: popup_pos + 3200]
-        self.assertIn("countdown_x = panel_x + panel_w + 28", popup_block)
-        self.assertIn("countdown_y = panel_y + 96", popup_block)
-        self.assertIn('"请扫码完成支付，稍后自动返回"', popup_block)
-        self.assertNotIn("30秒后自动返回", popup_block)
-        self.assertNotIn("60秒后自动返回", popup_block)
-        self.assertIn('snprintf(remain_text, sizeof(remain_text), "%02dS", remain)', popup_block)
-        self.assertIn("remain_text, 5, theme", popup_block)
+        self.assertNotIn("countdown_x = panel_x + panel_w + 28", popup_block)
+        self.assertNotIn("countdown_y = panel_y + 96", popup_block)
+        self.assertIn('"\u8bf7\u626b\u7801\u5b8c\u6210\u652f\u4ed8\uff0c"', popup_block)
+        self.assertIn('"\u79d2\u540e\u81ea\u52a8\u8fd4\u56de"', popup_block)
+        self.assertIn('snprintf(remain_text, sizeof(remain_text), "%d", remain)', popup_block)
+        self.assertIn("remain_text, 3, theme", popup_block)
+        self.assertNotIn("%02dS", popup_block)
+        self.assertNotIn("remain_text, 5, theme", popup_block)
 
     def test_payment_reset_signals_voice_completion_prompt(self):
         code = SRC.read_text(encoding="utf-8", errors="ignore")
@@ -327,12 +328,24 @@ class QrDisplayStaticTests(unittest.TestCase):
         self.assertIn("retail_finish_payment_and_reset();", loop_block)
         self.assertIn("redraw_dashboard = 1;", loop_block)
 
-    def test_qr_repeat_add_cooldown_uses_twenty_second_product_gate(self):
+    def test_qr_repeat_add_cooldown_uses_short_scan_pause(self):
         code = SRC.read_text(encoding="utf-8", errors="ignore")
-        self.assertIn("#define QR_PRODUCT_ADD_COOLDOWN_MS 20000", code)
+        self.assertIn("#define QR_PRODUCT_ADD_COOLDOWN_MS 1800", code)
+        self.assertIn("#define QR_SCAN_PAUSE_AFTER_ADD_MS 1800", code)
         self.assertIn("g_product_last_add_ms", code)
+        self.assertIn("g_qr_scan_resume_ms", code)
         self.assertIn("retail_product_can_add_from_qr(product, qr_now_ms)", code)
-        self.assertNotIn("#define QR_REPEAT_ADD_COOLDOWN_MS 800", code)
+        self.assertIn("qr_scan_now >= g_qr_scan_resume_ms", code)
+        self.assertIn("found_before_decode = found", code)
+        self.assertIn("g_qr_scan_resume_ms = now_ms() + QR_SCAN_PAUSE_AFTER_ADD_MS", code)
+
+        decode_pos = code.index("static int decode_qr_candidates(")
+        decode_block = code[decode_pos: decode_pos + 3200]
+        add_pos = decode_block.index("retail_cart_add_product(product);")
+        pause_pos = decode_block.index("g_qr_scan_resume_ms = now_ms() + QR_SCAN_PAUSE_AFTER_ADD_MS;")
+        return_pos = decode_block.index("return 1;", pause_pos)
+        self.assertGreater(pause_pos, add_pos)
+        self.assertGreater(return_pos, pause_pos)
 
     def test_qr_outline_is_drawn_after_successful_product_decode_before_cooldown(self):
         code = SRC.read_text(encoding="utf-8", errors="ignore")
@@ -356,6 +369,15 @@ class QrDisplayStaticTests(unittest.TestCase):
         self.assertIn("retail_cart_add_product(product);", qr_block)
         self.assertIn("retail_speak_product_added(product);", qr_block)
         self.assertIn("redraw_dashboard = 1;", qr_block)
+
+        speak_pos = code.index("static void retail_speak_product_added(")
+        speak_block = code[speak_pos: speak_pos + 900]
+        self.assertIn("retail_product_name_cn(product)", speak_block)
+        self.assertIn('"%s\u5df2\u52a0\u5165\u8d2d\u7269\u8f66\u3002"', speak_block)
+        self.assertIn('"\u626b\u7801\u8bc6\u522b\uff1a%s"', speak_block)
+        self.assertIn('retail_push_voice_history("\u5ba2\u6237\uff1a\u626b\u7801\u8bc6\u522b")', speak_block)
+        self.assertNotIn("QR recognized", speak_block)
+        self.assertNotIn("added to cart.", speak_block)
 
     def test_qr_luma_copy_respects_camera_stride(self):
         code = SRC.read_text(encoding="utf-8", errors="ignore")
@@ -424,6 +446,11 @@ class QrDisplayStaticTests(unittest.TestCase):
         self.assertIn("#define VOICE_HISTORY_TEXT_MAX 192", code)
         self.assertIn("g_voice_history[VOICE_HISTORY_LINES][VOICE_HISTORY_TEXT_MAX]", code)
         self.assertIn("utf8_safe_copy(", code)
+        self.assertIn("normalize_voice_common_sentence(", code)
+        self.assertIn("\u5df2\u4e3a\u60a8\u6253\u5f00\u5fae\u4fe1\u6536\u6b3e\u7801\uff0c\u8bf7\u626b\u7801\u652f\u4ed8\u3002", code)
+        self.assertIn("\u5df2\u4e3a\u60a8\u6253\u5f00\u652f\u4ed8\u5b9d\u6536\u6b3e\u7801\uff0c\u8bf7\u626b\u7801\u652f\u4ed8\u3002", code)
+        self.assertIn("\u5408\u8ba1%d\u4ef6\u5546\u54c1\uff0c\u5e94\u4ed8%s\u5143\u3002\u8bf7\u9009\u62e9\u5fae\u4fe1\u652f\u4ed8\u6216\u652f\u4ed8\u5b9d\u652f\u4ed8\u3002", code)
+        self.assertIn("%s\u5df2\u52a0\u5165\u8d2d\u7269\u8f66\u3002", code)
         self.assertIn("宸蹭负", code)
         self.assertIn("璇锋壂鐮", code)
 
@@ -454,6 +481,8 @@ class QrDisplayStaticTests(unittest.TestCase):
         self.assertIn("draw_voice_text_wrapped_rgb(", draw_block)
         self.assertIn("draw_voice_codepoint_rgb(", code)
         self.assertIn("voice_fullwidth_codepoint(", code)
+        self.assertIn("draw_char_rgb(fb, fw, fh, x, y - 1, (char)cp, 4, color)", code)
+        self.assertIn("return 24;", code)
         self.assertIn("sanitize_voice_history_line(", code)
         self.assertIn("if (c == '?') continue;", code)
         self.assertNotIn('strstr(g_voice_history[i], "答：")', draw_block)

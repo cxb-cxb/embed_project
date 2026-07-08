@@ -64,7 +64,8 @@
 #define PAYMENT_FINISHED_VOICE_FILE "/tmp/qsm_payment_finished_voice"
 #define VOICE_HISTORY_LINES 4
 #define VOICE_HISTORY_TEXT_MAX 192
-#define QR_PRODUCT_ADD_COOLDOWN_MS 20000
+#define QR_PRODUCT_ADD_COOLDOWN_MS 1800
+#define QR_SCAN_PAUSE_AFTER_ADD_MS 1800
 #define QR_SHIFTED_CROP_COUNT 8
 #define PAYMENT_QR_W 360
 #define PAYMENT_QR_H 480
@@ -739,10 +740,12 @@ static int voice_codepoint_width(uint32_t cp)
 {
     if (cp < 0x80) {
         if (cp == ' ') return 12;
-        if (cp >= '0' && cp <= '9') return utf8_codepoint_width(0xFF10 + (cp - '0'), 1);
-        if (cp >= 'A' && cp <= 'Z') return utf8_codepoint_width(0xFF21 + (cp - 'A'), 1);
-        if (cp >= 'a' && cp <= 'z') return utf8_codepoint_width(0xFF21 + (cp - 'a'), 1);
-        if (cp == '.') return utf8_codepoint_width(0xFF0E, 1);
+        if ((cp >= '0' && cp <= '9') ||
+            (cp >= 'A' && cp <= 'Z') ||
+            (cp >= 'a' && cp <= 'z') ||
+            cp == '.') {
+            return 24;
+        }
         return 18;
     }
     return utf8_codepoint_width(cp, 1);
@@ -763,6 +766,14 @@ static void draw_voice_codepoint_rgb(uint32_t *fb, int fw, int fh,
 {
     if (cp < 0x80) {
         uint32_t full = voice_fullwidth_codepoint(cp);
+        if ((cp >= '0' && cp <= '9') ||
+            (cp >= 'A' && cp <= 'Z') ||
+            (cp >= 'a' && cp <= 'z') ||
+            cp == '.') {
+            draw_char_rgb(fb, fw, fh, x, y - 1, (char)cp, 4, color);
+            return;
+        }
+        if (cp == '?') return;
         if (full != cp && find_ui_glyph(full)) {
             draw_codepoint_rgb(fb, fw, fh, x, y, full, 1, color);
             return;
@@ -938,6 +949,7 @@ static const struct retail_product g_products[] = {
 };
 
 static int64_t g_product_last_add_ms[sizeof(g_products) / sizeof(g_products[0])] = {0};
+static int64_t g_qr_scan_resume_ms = 0;
 
 static int ascii_lower(int c)
 {
@@ -1211,6 +1223,45 @@ static void strip_voice_role_prefix(char *text)
     }
 }
 
+static void normalize_voice_common_sentence(char *text, size_t text_sz)
+{
+    if (!text || text_sz == 0 || !text[0]) return;
+
+    if (strstr(text, "结账") || strstr(text, "结算") || strstr(text, "总共") ||
+        strstr(text, "合计") || strstr(text, "应付")) {
+        char total[24];
+        money_text(retail_cart_total_cents(), total, sizeof(total));
+        snprintf(text, text_sz, "合计%d件商品，应付%s元。请选择微信支付或支付宝支付。",
+                 retail_cart_item_count(), total);
+        return;
+    }
+    if (strstr(text, "微信") && (strstr(text, "收") || strstr(text, "码") ||
+                                strstr(text, "扫码"))) {
+        snprintf(text, text_sz, "已为您打开微信收款码，请扫码支付。");
+        return;
+    }
+    if ((strstr(text, "支付宝") || strstr(text, "支付寶")) &&
+        (strstr(text, "收") || strstr(text, "码") || strstr(text, "扫码"))) {
+        snprintf(text, text_sz, "已为您打开支付宝收款码，请扫码支付。");
+        return;
+    }
+    if (strstr(text, "银联") || strstr(text, "云闪付")) {
+        snprintf(text, text_sz, "银联云闪付暂不可用，请选择微信支付或支付宝支付。");
+        return;
+    }
+    if (strstr(text, "加入购物车") || strstr(text, "加入购物車") ||
+        strstr(text, "added to cart")) {
+        for (size_t i = 0; i < sizeof(g_products) / sizeof(g_products[0]); i++) {
+            if (strstr(text, g_products[i].name) ||
+                strstr(text, retail_product_name_cn(&g_products[i]))) {
+                snprintf(text, text_sz, "%s已加入购物车。",
+                         retail_product_name_cn(&g_products[i]));
+                return;
+            }
+        }
+    }
+}
+
 static void sanitize_voice_text(char *text, size_t text_sz)
 {
     char clean[256];
@@ -1236,6 +1287,7 @@ static void sanitize_voice_text(char *text, size_t text_sz)
                (strstr(text, "收码") || strstr(text, "收款码") || strstr(text, "扫码支付"))) {
         snprintf(text, text_sz, "已为您打开微信收款码，请扫码支付。");
     }
+    normalize_voice_common_sentence(text, text_sz);
 
     for (size_t i = 0; text[i] && j + 1 < sizeof(clean); i++) {
         unsigned char c = (unsigned char)text[i];
@@ -1247,6 +1299,7 @@ static void sanitize_voice_text(char *text, size_t text_sz)
     strncpy(text, clean, text_sz - 1);
     text[text_sz - 1] = '\0';
     strip_voice_role_prefix(text);
+    normalize_voice_common_sentence(text, text_sz);
 }
 
 static void utf8_safe_copy(char *dst, size_t dst_sz, const char *src)
@@ -1578,12 +1631,14 @@ static void retail_speak_text_async(const char *text)
 static void retail_speak_product_added(const struct retail_product *product)
 {
     char text[160];
+    const char *name_cn;
     if (!product) return;
-    snprintf(text, sizeof(text), "QR recognized %s, added to cart.", product->name);
+    name_cn = retail_product_name_cn(product);
+    snprintf(text, sizeof(text), "%s已加入购物车。", name_cn);
     retail_speak_text_async(text);
-    snprintf(g_voice_question, sizeof(g_voice_question), "扫码：%s", product->name);
-    snprintf(g_voice_answer, sizeof(g_voice_answer), "%s已加入购物车", product->name);
-    retail_push_voice_history("客户：扫码");
+    snprintf(g_voice_question, sizeof(g_voice_question), "扫码识别：%s", name_cn);
+    snprintf(g_voice_answer, sizeof(g_voice_answer), "%s已加入购物车。", name_cn);
+    retail_push_voice_history("客户：扫码识别");
     format_prefixed_text(text, sizeof(text), "AI：", g_voice_answer);
     retail_push_voice_history(text);
 }
@@ -1882,8 +1937,6 @@ static void draw_payment_popup(void)
     int panel_y = (fh - panel_h) / 2;
     int qr_x = panel_x + 44;
     int qr_y = panel_y + 76;
-    int countdown_x = panel_x + panel_w + 28;
-    int countdown_y = panel_y + 96;
     int remain = (int)((g_payment_popup_until_ms - now_ms() + 999) / 1000);
     uint32_t theme = equals_ignore_case(g_payment_method, "alipay") ? 0xFF1677FF : 0xFF07C160;
     const uint32_t *qr = equals_ignore_case(g_payment_method, "alipay") ?
@@ -1908,16 +1961,19 @@ static void draw_payment_popup(void)
         draw_rect_rgb(fb, fw, fh, qr_x, qr_y, PAYMENT_QR_W, PAYMENT_QR_H, 0xFF8899AA, 2);
         draw_text_rgb(fb, fw, fh, qr_x + 42, qr_y + 220, "PAYMENT QR MISSING", 2, 0xFF111111);
     }
-    char remain_text[32];
-    snprintf(remain_text, sizeof(remain_text), "%02dS", remain);
+    char remain_text[16];
+    int hint_x = panel_x + 36;
+    int hint_y = panel_y + panel_h + 28;
+    snprintf(remain_text, sizeof(remain_text), "%d", remain);
     fill_rect_rgb(fb, fw, fh, panel_x, panel_y + panel_h + 12, panel_w, 54, 0xDD071018);
     draw_rect_rgb(fb, fw, fh, panel_x, panel_y + panel_h + 12, panel_w, 54, theme, 2);
-    draw_text_utf8_rgb(fb, fw, fh, panel_x + 46, panel_y + panel_h + 28,
-                       "请扫码完成支付，稍后自动返回", 1, 0xFFFFFFFF);
-    fill_rect_rgb(fb, fw, fh, countdown_x - 12, countdown_y - 16, 190, 86, 0xDD071018);
-    draw_rect_rgb(fb, fw, fh, countdown_x - 12, countdown_y - 16, 190, 86, theme, 3);
-    draw_text_utf8_rgb(fb, fw, fh, countdown_x + 20, countdown_y - 6, "剩余", 1, 0xFFFFFFFF);
-    draw_text_rgb(fb, fw, fh, countdown_x + 18, countdown_y + 28, remain_text, 5, theme);
+    draw_text_utf8_rgb(fb, fw, fh, hint_x, hint_y,
+                       "请扫码完成支付，", 1, 0xFFFFFFFF);
+    draw_text_rgb(fb, fw, fh, hint_x + 204, hint_y + 2,
+                  remain_text, 3, theme);
+    draw_text_utf8_rgb(fb, fw, fh,
+                       hint_x + 204 + (int)strlen(remain_text) * 18 + 10,
+                       hint_y, "秒后自动返回", 1, 0xFFFFFFFF);
 }
 
 static void draw_voice_history_panel(uint32_t *fb, int fw, int fh,
@@ -2131,7 +2187,9 @@ static int decode_qr_candidates(struct quirc *qr,
             retail_speak_product_added(product);
             (*found)++;
             *redraw_dashboard = 1;
+            g_qr_scan_resume_ms = now_ms() + QR_SCAN_PAUSE_AFTER_ADD_MS;
             if (!continuous) g_running = 0;
+            return 1;
         }
     }
     return decoded;
@@ -2681,7 +2739,12 @@ int main(int argc, char **argv)
         /* QR 检测 */
         int qw, qh;
         int decoded_this_frame = 0;
-        uint8_t *qb = quirc_begin(qr, &qw, &qh);
+        int64_t qr_scan_now = now_ms();
+        unsigned int found_before_decode = found;
+        uint8_t *qb = NULL;
+        if (qr_scan_now >= g_qr_scan_resume_ms) {
+            qb = quirc_begin(qr, &qw, &qh);
+        }
         if (qb && qw == (int)cam_w && qh == (int)cam_h) {
             copy_luma_for_qr(qb, yp, cam_w, cam_h, g_y_stride);
             quirc_end(qr);
@@ -2735,6 +2798,9 @@ int main(int argc, char **argv)
                                                               continuous, pass_name);
                 }
             }
+        }
+        if (found > found_before_decode) {
+            g_qr_scan_resume_ms = now_ms() + QR_SCAN_PAUSE_AFTER_ADD_MS;
         }
         saw_qr_this_frame = decoded_this_frame;
         (void)saw_qr_this_frame;

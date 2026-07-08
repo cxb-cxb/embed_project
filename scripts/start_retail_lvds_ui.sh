@@ -41,6 +41,10 @@ for fd in /proc/[0-9]*/fd/*; do
 done
 
 rm -f /tmp/qr_scanner_display.pid /tmp/qr_scanner_display_watchdog.pid "$STOP_FILE" "$LOG_FILE"
+rm -f /tmp/qsm_retail_voice_state \
+      /tmp/qsm_payment_waiting_method \
+      /tmp/qsm_payment_done \
+      /tmp/qsm_payment_finished_voice
 trap '' HUP
 if command -v nohup >/dev/null 2>&1; then
   nohup sh -c "
