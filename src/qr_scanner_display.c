@@ -24,6 +24,7 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/select.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <time.h>
@@ -59,6 +60,7 @@
 #define MAX_CART_ITEMS 16
 #define VOICE_STATE_FILE "/tmp/qsm_retail_voice_state"
 #define PAYMENT_WAIT_FILE "/tmp/qsm_payment_waiting_method"
+#define PAYMENT_DONE_FILE "/tmp/qsm_payment_done"
 #define VOICE_HISTORY_LINES 4
 #define QR_REPEAT_ADD_COOLDOWN_MS 800
 #define PAYMENT_QR_W 360
@@ -103,6 +105,7 @@ static char           g_payment_url[160] = "PAY: scan checkout";
 static int            g_checkout_requested = 0;
 static char           g_payment_method[16] = "";
 static int64_t        g_payment_popup_until_ms = 0;
+static int            g_stdin_closed = 0;
 static uint32_t      *g_payment_wechat_bgra = NULL;
 static uint32_t      *g_payment_alipay_bgra = NULL;
 static time_t         g_voice_state_mtime = 0;
@@ -851,6 +854,8 @@ static void retail_hide_payment_popup(void);
 static void retail_finish_payment_and_reset(void);
 static void retail_show_payment_popup(const char *method);
 static void retail_consume_voice_state_command(void);
+static int retail_stdin_enter_pressed(void);
+static int retail_payment_done_requested(void);
 
 static void retail_apply_voice_cart_command(const char *cmd)
 {
@@ -924,6 +929,36 @@ static void retail_consume_voice_state_command(void)
 {
     unlink(VOICE_STATE_FILE);
     g_voice_state_mtime = 0;
+}
+
+static int retail_stdin_enter_pressed(void)
+{
+    fd_set rfds;
+    struct timeval tv;
+    char line[32];
+
+    if (g_stdin_closed) return 0;
+    FD_ZERO(&rfds);
+    FD_SET(STDIN_FILENO, &rfds);
+    tv.tv_sec = 0;
+    tv.tv_usec = 0;
+    if (select(STDIN_FILENO + 1, &rfds, NULL, NULL, &tv) <= 0) return 0;
+    if (!FD_ISSET(STDIN_FILENO, &rfds)) return 0;
+    if (!fgets(line, sizeof(line), stdin)) {
+        g_stdin_closed = 1;
+        return 0;
+    }
+    return line[0] == '\n' || line[0] == '\r' || line[0] == '\0';
+}
+
+static int retail_payment_done_requested(void)
+{
+    if (retail_stdin_enter_pressed()) return 1;
+    if (access(PAYMENT_DONE_FILE, F_OK) == 0) {
+        unlink(PAYMENT_DONE_FILE);
+        return 1;
+    }
+    return 0;
 }
 
 static int retail_apply_voice_state(void)
@@ -1023,7 +1058,7 @@ static void retail_finish_payment_and_reset(void)
     snprintf(g_voice_question, sizeof(g_voice_question), "PAYMENT COMPLETE");
     snprintf(g_voice_answer, sizeof(g_voice_answer), "Cart cleared, ready for next customer.");
     retail_push_voice_history(g_voice_answer);
-    printf("[payment] timeout complete; cart cleared and main UI reset\n");
+    printf("[payment] complete; cart cleared and main UI reset\n");
     fflush(stdout);
 }
 
@@ -1952,6 +1987,10 @@ int main(int argc, char **argv)
             redraw_dashboard = 1;
         }
         if (g_payment_popup_until_ms > 0 && now_ms() >= g_payment_popup_until_ms) {
+            retail_finish_payment_and_reset();
+            redraw_dashboard = 1;
+        }
+        if (g_payment_popup_until_ms > 0 && retail_payment_done_requested()) {
             retail_finish_payment_and_reset();
             redraw_dashboard = 1;
         }

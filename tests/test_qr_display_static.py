@@ -264,6 +264,24 @@ class QrDisplayStaticTests(unittest.TestCase):
         self.assertIn("if (cart_cmd[0])", apply_block)
         self.assertIn("retail_consume_voice_state_command();", apply_block)
 
+    def test_enter_key_completes_payment_popup_immediately(self):
+        code = SRC.read_text(encoding="utf-8", errors="ignore")
+
+        self.assertIn("#include <sys/select.h>", code)
+        self.assertIn('#define PAYMENT_DONE_FILE "/tmp/qsm_payment_done"', code)
+        self.assertIn("static int retail_stdin_enter_pressed(void)", code)
+        self.assertIn("static int retail_payment_done_requested(void)", code)
+        self.assertIn("FD_SET(STDIN_FILENO", code)
+        self.assertIn("fgets(line, sizeof(line), stdin)", code)
+        self.assertIn("access(PAYMENT_DONE_FILE, F_OK)", code)
+        self.assertIn("unlink(PAYMENT_DONE_FILE);", code)
+
+        loop_pos = code.index("if (g_payment_popup_until_ms > 0 && now_ms() >= g_payment_popup_until_ms)")
+        loop_block = code[loop_pos: loop_pos + 520]
+        self.assertIn("retail_payment_done_requested()", loop_block)
+        self.assertIn("retail_finish_payment_and_reset();", loop_block)
+        self.assertIn("redraw_dashboard = 1;", loop_block)
+
     def test_qr_repeat_add_cooldown_is_fast_for_checkout_demo(self):
         code = SRC.read_text(encoding="utf-8", errors="ignore")
         self.assertIn("#define QR_REPEAT_ADD_COOLDOWN_MS 800", code)

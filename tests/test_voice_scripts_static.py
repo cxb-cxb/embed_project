@@ -18,6 +18,15 @@ class VoiceAutoListenScriptTest(unittest.TestCase):
         self.assertIn("/tmp/qsm_auto_voice.pid", text)
         self.assertIn("run_mission is ready", text)
 
+    def test_payment_done_enter_script_triggers_ui_reset_file(self):
+        script = ROOT / "scripts" / "payment_done_enter.sh"
+        self.assertTrue(script.exists())
+
+        text = script.read_text(encoding="utf-8", errors="ignore")
+        self.assertIn("read -r", text)
+        self.assertIn("/tmp/qsm_payment_done", text)
+        self.assertIn(": > \"$PAYMENT_DONE_FILE\"", text)
+
     def test_run_mission_stops_previous_shell_script_listeners_by_command_line(self):
         script = ROOT / "scripts" / "run_mission.sh"
         self.assertTrue(script.exists())
