@@ -66,6 +66,7 @@
 #define VOICE_HISTORY_TEXT_MAX 192
 #define QR_PRODUCT_ADD_COOLDOWN_MS 1800
 #define QR_SCAN_PAUSE_AFTER_ADD_MS 1800
+#define QR_REARM_ABSENT_MS 650
 #define QR_SHIFTED_CROP_COUNT 8
 #define PAYMENT_QR_W 360
 #define PAYMENT_QR_H 480
@@ -950,6 +951,8 @@ static const struct retail_product g_products[] = {
 
 static int64_t g_product_last_add_ms[sizeof(g_products) / sizeof(g_products[0])] = {0};
 static int64_t g_qr_scan_resume_ms = 0;
+static int64_t g_qr_last_product_seen_ms = 0;
+static char    g_qr_latched_product_id[32] = "";
 
 static int ascii_lower(int c)
 {
@@ -1055,16 +1058,34 @@ static int retail_product_index(const struct retail_product *product)
     return -1;
 }
 
+static void retail_note_qr_product_seen(const struct retail_product *product,
+                                        int64_t qr_now_ms)
+{
+    if (!product) return;
+    g_qr_last_product_seen_ms = qr_now_ms;
+}
+
+static void retail_reset_qr_product_latch(void)
+{
+    g_qr_latched_product_id[0] = '\0';
+}
+
 static int retail_product_can_add_from_qr(const struct retail_product *product,
                                           int64_t qr_now_ms)
 {
     int index = retail_product_index(product);
     if (index < 0) return 0;
+    if (g_qr_latched_product_id[0] &&
+        equals_ignore_case(g_qr_latched_product_id, product->id)) {
+        return 0;
+    }
     if (g_product_last_add_ms[index] > 0 &&
         qr_now_ms - g_product_last_add_ms[index] < QR_PRODUCT_ADD_COOLDOWN_MS) {
         return 0;
     }
     g_product_last_add_ms[index] = qr_now_ms;
+    snprintf(g_qr_latched_product_id, sizeof(g_qr_latched_product_id),
+             "%s", product->id);
     return 1;
 }
 
@@ -2164,12 +2185,13 @@ static int decode_qr_candidates(struct quirc *qr,
                 fflush(stdout);
                 continue;
             }
+            retail_note_qr_product_seen(product, qr_now_ms);
             if (have_display) {
                 draw_qr_outline(&code, cam_w, cam_h);
             }
             if (!retail_product_can_add_from_qr(product, qr_now_ms)) {
                 printf("\n>>> QR CODE: %s <<<\n", payload);
-                printf("    pass:%s ignored: duplicate product within %dms\n",
+                printf("    pass:%s ignored: duplicate product still visible or within %dms\n",
                        pass_name, QR_PRODUCT_ADD_COOLDOWN_MS);
                 fflush(stdout);
                 continue;
@@ -2801,6 +2823,11 @@ int main(int argc, char **argv)
         }
         if (found > found_before_decode) {
             g_qr_scan_resume_ms = now_ms() + QR_SCAN_PAUSE_AFTER_ADD_MS;
+        }
+        if (qr_scan_now >= g_qr_scan_resume_ms && !decoded_this_frame &&
+            g_qr_latched_product_id[0] &&
+            qr_scan_now - g_qr_last_product_seen_ms >= QR_REARM_ABSENT_MS) {
+            retail_reset_qr_product_latch();
         }
         saw_qr_this_frame = decoded_this_frame;
         (void)saw_qr_this_frame;

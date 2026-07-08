@@ -347,6 +347,32 @@ class QrDisplayStaticTests(unittest.TestCase):
         self.assertGreater(pause_pos, add_pos)
         self.assertGreater(return_pos, pause_pos)
 
+    def test_qr_repeat_add_requires_code_to_leave_camera_before_same_product_readds(self):
+        code = SRC.read_text(encoding="utf-8", errors="ignore")
+        for symbol in [
+            "#define QR_REARM_ABSENT_MS",
+            "g_qr_latched_product_id",
+            "g_qr_last_product_seen_ms",
+            "retail_note_qr_product_seen(product, qr_now_ms)",
+            "retail_reset_qr_product_latch()",
+            "equals_ignore_case(g_qr_latched_product_id, product->id)",
+            "qr_scan_now >= g_qr_scan_resume_ms && !decoded_this_frame",
+        ]:
+            with self.subTest(symbol=symbol):
+                self.assertIn(symbol, code)
+
+        can_add_pos = code.index("static int retail_product_can_add_from_qr(")
+        can_add_block = code[can_add_pos: can_add_pos + 1200]
+        latch_pos = can_add_block.index("equals_ignore_case(g_qr_latched_product_id, product->id)")
+        cooldown_pos = can_add_block.index("g_product_last_add_ms[index] > 0")
+        set_latch_pos = can_add_block.index("snprintf(g_qr_latched_product_id")
+        self.assertLess(latch_pos, cooldown_pos)
+        self.assertGreater(set_latch_pos, cooldown_pos)
+
+        reset_pos = code.index("retail_reset_qr_product_latch();")
+        loop_pos = code.index("qr_scan_now >= g_qr_scan_resume_ms && !decoded_this_frame")
+        self.assertGreater(reset_pos, loop_pos)
+
     def test_qr_outline_is_drawn_after_successful_product_decode_before_cooldown(self):
         code = SRC.read_text(encoding="utf-8", errors="ignore")
         decode_pos = code.index("static int decode_qr_candidates(")
