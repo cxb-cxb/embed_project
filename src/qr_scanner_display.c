@@ -67,7 +67,7 @@
 #define QR_REPEAT_ADD_COOLDOWN_MS 800
 #define PAYMENT_QR_W 360
 #define PAYMENT_QR_H 480
-#define PAYMENT_POPUP_MS 60000
+#define PAYMENT_POPUP_MS 30000
 #define PAYMENT_WECHAT_BGRA "/userdata/Embed_project/assets/payment_wechat.bgra"
 #define PAYMENT_ALIPAY_BGRA "/userdata/Embed_project/assets/payment_alipay.bgra"
 
@@ -1169,7 +1169,7 @@ static int draw_voice_label_rgb(uint32_t *fb, int fw, int fh,
     if (!label || !label[0]) return 0;
     if (strcmp(label, "AI：") == 0) {
         draw_text_utf8_rgb(fb, fw, fh, x, y, "ＡＩ：", 1, color);
-        return 82;
+        return 58;
     }
     draw_text_utf8_rgb(fb, fw, fh, x, y, label, 1, color);
     return 82;
@@ -1692,6 +1692,7 @@ static void draw_payment_popup(void)
     int panel_y = (fh - panel_h) / 2;
     int qr_x = panel_x + 44;
     int qr_y = panel_y + 76;
+    int countdown_y = panel_y + panel_h + 18;
     int remain = (int)((g_payment_popup_until_ms - now_ms() + 999) / 1000);
     uint32_t theme = equals_ignore_case(g_payment_method, "alipay") ? 0xFF1677FF : 0xFF07C160;
     const uint32_t *qr = equals_ignore_case(g_payment_method, "alipay") ?
@@ -1716,12 +1717,13 @@ static void draw_payment_popup(void)
         draw_rect_rgb(fb, fw, fh, qr_x, qr_y, PAYMENT_QR_W, PAYMENT_QR_H, 0xFF8899AA, 2);
         draw_text_rgb(fb, fw, fh, qr_x + 42, qr_y + 220, "PAYMENT QR MISSING", 2, 0xFF111111);
     }
-    draw_text_utf8_rgb(fb, fw, fh, panel_x + 56, panel_y + panel_h - 52,
-                       "请扫码完成支付，60秒后自动返回", 1, 0xFF111111);
     char remain_text[32];
     snprintf(remain_text, sizeof(remain_text), "%02dS", remain);
-    draw_text_rgb(fb, fw, fh, panel_x + panel_w - 96, panel_y + panel_h - 58,
-                  remain_text, 3, theme);
+    fill_rect_rgb(fb, fw, fh, panel_x, countdown_y - 10, panel_w, 70, 0xDD071018);
+    draw_rect_rgb(fb, fw, fh, panel_x, countdown_y - 10, panel_w, 70, theme, 2);
+    draw_text_utf8_rgb(fb, fw, fh, panel_x + 34, countdown_y + 8,
+                       "请扫码完成支付，30秒后自动返回", 1, 0xFFFFFFFF);
+    draw_text_rgb(fb, fw, fh, panel_x + panel_w - 156, countdown_y - 2, remain_text, 5, theme);
 }
 
 static void draw_voice_history_panel(uint32_t *fb, int fw, int fh,

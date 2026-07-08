@@ -226,10 +226,10 @@ class QrDisplayStaticTests(unittest.TestCase):
             with self.subTest(symbol=symbol):
                 self.assertIn(symbol, code)
 
-    def test_payment_popup_timeout_resets_checkout_and_cart_after_one_minute(self):
+    def test_payment_popup_timeout_resets_checkout_and_cart_after_thirty_seconds(self):
         code = SRC.read_text(encoding="utf-8", errors="ignore")
 
-        self.assertIn("#define PAYMENT_POPUP_MS 60000", code)
+        self.assertIn("#define PAYMENT_POPUP_MS 30000", code)
         self.assertIn("retail_finish_payment_and_reset();", code)
 
         timeout_pos = code.index("if (g_payment_popup_until_ms > 0 && now_ms() >= g_payment_popup_until_ms)")
@@ -247,6 +247,17 @@ class QrDisplayStaticTests(unittest.TestCase):
         self.assertIn("g_last_total_cents = 0;", reset_block)
         self.assertIn("\"PAY: scan checkout\"", reset_block)
         self.assertIn("g_order_id[0] = '\\0';", reset_block)
+
+    def test_payment_popup_countdown_is_large_and_outside_qr_panel(self):
+        code = SRC.read_text(encoding="utf-8", errors="ignore")
+
+        popup_pos = code.index("static void draw_payment_popup(void)")
+        popup_block = code[popup_pos: popup_pos + 2600]
+        self.assertIn("countdown_y = panel_y + panel_h + 18", popup_block)
+        self.assertIn('"请扫码完成支付，30秒后自动返回"', popup_block)
+        self.assertNotIn("60秒后自动返回", popup_block)
+        self.assertIn('snprintf(remain_text, sizeof(remain_text), "%02dS", remain)', popup_block)
+        self.assertIn("remain_text, 5, theme", popup_block)
 
     def test_payment_reset_signals_voice_completion_prompt(self):
         code = SRC.read_text(encoding="utf-8", errors="ignore")
@@ -361,6 +372,7 @@ class QrDisplayStaticTests(unittest.TestCase):
         self.assertIn("voice_line_content(", draw_block)
         self.assertIn("draw_voice_label_rgb(", code)
         self.assertIn('draw_text_utf8_rgb(fb, fw, fh, x, y, "ＡＩ：", 1, color)', code)
+        self.assertIn("return 58;", code)
         self.assertIn("draw_voice_text_wrapped_rgb(", draw_block)
         self.assertIn("draw_voice_codepoint_rgb(", code)
         self.assertIn("voice_fullwidth_codepoint(", code)
