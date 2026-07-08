@@ -319,6 +319,25 @@ class QrDisplayStaticTests(unittest.TestCase):
         self.assertIn("retail_speak_product_added(product);", qr_block)
         self.assertIn("redraw_dashboard = 1;", qr_block)
 
+    def test_qr_luma_copy_respects_camera_stride(self):
+        code = SRC.read_text(encoding="utf-8", errors="ignore")
+
+        self.assertIn("static void copy_luma_for_qr(", code)
+        copy_pos = code.index("static void copy_luma_for_qr(")
+        copy_block = code[copy_pos: copy_pos + 500]
+        self.assertIn("memcpy(dst + y * width, src + y * stride, width)", copy_block)
+        self.assertNotIn("memcpy(qb, yp, cam_w * cam_h)", code)
+
+    def test_qr_decode_has_enhanced_fallback_for_product_labels(self):
+        code = SRC.read_text(encoding="utf-8", errors="ignore")
+
+        self.assertIn("static void enhance_luma_for_qr(", code)
+        self.assertIn("struct quirc *qr_enhanced = quirc_new();", code)
+        self.assertIn("quirc_resize(qr_enhanced, cam_w, cam_h)", code)
+        self.assertIn("decode_qr_candidates(qr,", code)
+        self.assertIn("decode_qr_candidates(qr_enhanced,", code)
+        self.assertIn("enhance_luma_for_qr(qb2, yp, cam_w, cam_h, g_y_stride)", code)
+
     def test_voice_panel_uses_scroll_history_and_qr_repeat_can_accumulate(self):
         code = SRC.read_text(encoding="utf-8", errors="ignore")
 

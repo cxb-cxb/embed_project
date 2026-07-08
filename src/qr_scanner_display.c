@@ -152,6 +152,69 @@ static inline int clamp_int(int v, int lo, int hi)
     return v < lo ? lo : (v > hi ? hi : v);
 }
 
+static void copy_luma_for_qr(uint8_t *dst, const uint8_t *src,
+                             int width, int height, int stride)
+{
+    for (int y = 0; y < height; y++) {
+        memcpy(dst + y * width, src + y * stride, width);
+    }
+}
+
+static void enhance_luma_for_qr(uint8_t *dst, const uint8_t *src,
+                                int width, int height, int stride)
+{
+    unsigned int hist[256];
+    int total = width * height;
+    int low_target = total / 50;
+    int high_target = total - low_target;
+    int cumulative = 0;
+    int lo = 0;
+    int hi = 255;
+    memset(hist, 0, sizeof(hist));
+
+    for (int y = 0; y < height; y++) {
+        const uint8_t *row = src + y * stride;
+        for (int x = 0; x < width; x++) {
+            hist[row[x]]++;
+        }
+    }
+    for (int i = 0; i < 256; i++) {
+        cumulative += (int)hist[i];
+        if (cumulative >= low_target) {
+            lo = i;
+            break;
+        }
+    }
+    cumulative = 0;
+    for (int i = 0; i < 256; i++) {
+        cumulative += (int)hist[i];
+        if (cumulative >= high_target) {
+            hi = i;
+            break;
+        }
+    }
+    if (hi - lo < 32) {
+        lo = clamp_int(lo - 24, 0, 255);
+        hi = clamp_int(hi + 24, 0, 255);
+    }
+    if (hi <= lo) {
+        copy_luma_for_qr(dst, src, width, height, stride);
+        return;
+    }
+
+    for (int y = 0; y < height; y++) {
+        const uint8_t *row = src + y * stride;
+        uint8_t *out = dst + y * width;
+        for (int x = 0; x < width; x++) {
+            int v = (row[x] - lo) * 255 / (hi - lo);
+            v = clamp_int(v, 0, 255);
+            if (v < 42) v = 0;
+            else if (v > 213) v = 255;
+            out[x] = (uint8_t)v;
+        }
+    }
+}
+
 /* ── NV12 → XRGB8888 软转 ────────────────────────────────────────── */
 
 static void nv12_to_xrgb(uint8_t *y, uint8_t *uv,
@@ -1891,6 +1954,60 @@ static void draw_qr_outline(const struct quirc_code *code,
 
 /* ── DRM 显示初始化 (纯 ioctl, 无需 libdrm) ───────────────────────── */
 
+static int decode_qr_candidates(struct quirc *qr,
+                                unsigned int cam_w, unsigned int cam_h,
+                                int have_display,
+                                char *last, size_t last_sz,
+                                unsigned int *found,
+                                int *redraw_dashboard,
+                                int continuous,
+                                const char *pass_name)
+{
+    int decoded = 0;
+    int count = quirc_count(qr);
+    for (int i = 0; i < count; i++) {
+        struct quirc_code code;
+        struct quirc_data data;
+        quirc_extract(qr, i, &code);
+        if (have_display) {
+            draw_qr_outline(&code, cam_w, cam_h);
+        }
+        if (quirc_decode(&code, &data) == QUIRC_SUCCESS) {
+            const char *payload = (char *)data.payload;
+            int64_t qr_now_ms = now_ms();
+            int same_qr_can_add =
+                strcmp(payload, g_last_qr_payload) == 0 &&
+                (qr_now_ms - g_last_qr_add_ms) >= QR_REPEAT_ADD_COOLDOWN_MS;
+            decoded = 1;
+            if (strcmp(payload, last) != 0 || same_qr_can_add) {
+                const struct retail_product *product =
+                    retail_product_from_payload(payload);
+                printf("\n>>> QR CODE: %s <<<\n", payload);
+                printf("    ver:%d ecc:%c pass:%s\n",
+                       data.version, "MLHQ"[data.ecc_level], pass_name);
+                fflush(stdout);
+
+                strncpy(last, payload, last_sz - 1);
+                last[last_sz - 1] = '\0';
+                strncpy(g_last_qr_payload, payload, sizeof(g_last_qr_payload) - 1);
+                g_last_qr_payload[sizeof(g_last_qr_payload) - 1] = '\0';
+                g_last_qr_add_ms = qr_now_ms;
+                if (product) {
+                    retail_cart_add_product(product);
+                    retail_speak_product_added(product);
+                } else {
+                    snprintf(g_voice_question, sizeof(g_voice_question), "QR: %s", last);
+                    snprintf(g_voice_answer, sizeof(g_voice_answer), "Unknown QR payload.");
+                }
+                (*found)++;
+                *redraw_dashboard = 1;
+                if (!continuous) g_running = 0;
+            }
+        }
+    }
+    return decoded;
+}
+
 static int drm_display_init(int cam_w, int cam_h)
 {
     int fd = open(DRM_DEV, O_RDWR);
@@ -2343,7 +2460,10 @@ int main(int argc, char **argv)
     if (camera_open(device, &cam_w, &cam_h) < 0) return 1;
 
     struct quirc *qr = quirc_new();
-    if (!qr || quirc_resize(qr, cam_w, cam_h) < 0) {
+    struct quirc *qr_enhanced = quirc_new();
+    if (!qr || !qr_enhanced ||
+        quirc_resize(qr, cam_w, cam_h) < 0 ||
+        quirc_resize(qr_enhanced, cam_w, cam_h) < 0) {
         fprintf(stderr, "quirc init failed\n"); return 1;
     }
 
@@ -2429,52 +2549,31 @@ int main(int argc, char **argv)
 
         /* QR 检测 */
         int qw, qh;
+        int decoded_this_frame = 0;
         uint8_t *qb = quirc_begin(qr, &qw, &qh);
         if (qb && qw == (int)cam_w && qh == (int)cam_h) {
-            memcpy(qb, yp, cam_w * cam_h);
+            copy_luma_for_qr(qb, yp, cam_w, cam_h, g_y_stride);
             quirc_end(qr);
-
-            for (int i = 0; i < quirc_count(qr); i++) {
-                struct quirc_code code;
-                struct quirc_data data;
-                quirc_extract(qr, i, &code);
-                saw_qr_this_frame = 1;
-                if (have_display) {
-                    draw_qr_outline(&code, cam_w, cam_h);
-                }
-                if (quirc_decode(&code, &data) == QUIRC_SUCCESS) {
-                    const char *payload = (char *)data.payload;
-                    int64_t qr_now_ms = now_ms();
-                    int same_qr_can_add =
-                        strcmp(payload, g_last_qr_payload) == 0 &&
-                        (qr_now_ms - g_last_qr_add_ms) >= QR_REPEAT_ADD_COOLDOWN_MS;
-                    if (strcmp(payload, last) != 0 || same_qr_can_add) {
-                        const struct retail_product *product =
-                            retail_product_from_payload(payload);
-                        printf("\n>>> QR CODE: %s <<<\n", payload);
-                        printf("    ver:%d ecc:%c\n",
-                               data.version, "MLHQ"[data.ecc_level]);
-                        fflush(stdout);
-
-                        strncpy(last, payload, sizeof(last) - 1);
-                        last[sizeof(last) - 1] = '\0';
-                        strncpy(g_last_qr_payload, payload, sizeof(g_last_qr_payload) - 1);
-                        g_last_qr_payload[sizeof(g_last_qr_payload) - 1] = '\0';
-                        g_last_qr_add_ms = qr_now_ms;
-                        if (product) {
-                            retail_cart_add_product(product);
-                            retail_speak_product_added(product);
-                        } else {
-                            snprintf(g_voice_question, sizeof(g_voice_question), "QR: %s", last);
-                            snprintf(g_voice_answer, sizeof(g_voice_answer), "Unknown QR payload.");
-                        }
-                        found++;
-                        redraw_dashboard = 1;
-                        if (!continuous) g_running = 0;
-                    }
+            decoded_this_frame = decode_qr_candidates(qr, cam_w, cam_h,
+                                                      have_display,
+                                                      last, sizeof(last),
+                                                      &found, &redraw_dashboard,
+                                                      continuous, "raw");
+            if (!decoded_this_frame) {
+                int qw2, qh2;
+                uint8_t *qb2 = quirc_begin(qr_enhanced, &qw2, &qh2);
+                if (qb2 && qw2 == (int)cam_w && qh2 == (int)cam_h) {
+                    enhance_luma_for_qr(qb2, yp, cam_w, cam_h, g_y_stride);
+                    quirc_end(qr_enhanced);
+                    decoded_this_frame = decode_qr_candidates(qr_enhanced, cam_w, cam_h,
+                                                              have_display,
+                                                              last, sizeof(last),
+                                                              &found, &redraw_dashboard,
+                                                              continuous, "enhanced");
                 }
             }
         }
+        saw_qr_this_frame = decoded_this_frame;
         (void)saw_qr_this_frame;
 
         if (have_display) {
@@ -2495,6 +2594,7 @@ int main(int argc, char **argv)
     camera_close();
     drm_display_cleanup();
     quirc_destroy(qr);
+    quirc_destroy(qr_enhanced);
 
     int64_t e = now_ms() - t0;
     printf("\nDone. %u frames %.1fs (%.1ffps) | %d QR found.\n",
